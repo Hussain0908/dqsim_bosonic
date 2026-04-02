@@ -1,3 +1,3 @@
-from .simulator import SimulationProfile, SimulationResult, StatevectorSimulator
+from dqsim._core import SimulationProfile, SimulationResult, StatevectorSimulator
 
 __all__ = ["StatevectorSimulator", "SimulationResult", "SimulationProfile"]

@@ -1,0 +1,14 @@
+mod engine;
+mod gates;
+mod simulator;
+mod types;
+
+use pyo3::prelude::*;
+
+#[pymodule]
+fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<simulator::StatevectorSimulator>()?;
+    m.add_class::<simulator::SimulationResult>()?;
+    m.add_class::<simulator::SimulationProfile>()?;
+    Ok(())
+}
