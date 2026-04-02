@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass, field
+from typing import Callable
+
 import numpy as np
 from numpy.random import Generator
 from numpy.typing import NDArray
@@ -62,6 +66,38 @@ from . import gates as g
 from .engine import apply_n_qubit, apply_one_qubit, marginal_probs, measure_qubit, sample_counts
 
 
+@dataclass
+class SimulationProfile:
+    """Timing and call-count data for a single simulate() call."""
+
+    apply_one_qubit_calls: int = 0
+    apply_one_qubit_time: float = 0.0
+    apply_n_qubit_calls: int = 0
+    apply_n_qubit_time: float = 0.0
+    measure_qubit_calls: int = 0
+    measure_qubit_time: float = 0.0
+    total_time: float = 0.0
+
+    # internal scratch — not part of the public interface
+    _start: float = field(default=0.0, repr=False)
+
+    def __repr__(self) -> str:
+        total = self.total_time or 1e-9
+        lines = [
+            f"SimulationProfile (total: {self.total_time * 1000:.2f} ms)",
+            f"  apply_one_qubit : {self.apply_one_qubit_calls:4d} calls  "
+            f"{self.apply_one_qubit_time * 1000:8.2f} ms  "
+            f"({100 * self.apply_one_qubit_time / total:.1f}%)",
+            f"  apply_n_qubit   : {self.apply_n_qubit_calls:4d} calls  "
+            f"{self.apply_n_qubit_time * 1000:8.2f} ms  "
+            f"({100 * self.apply_n_qubit_time / total:.1f}%)",
+            f"  measure_qubit   : {self.measure_qubit_calls:4d} calls  "
+            f"{self.measure_qubit_time * 1000:8.2f} ms  "
+            f"({100 * self.measure_qubit_time / total:.1f}%)",
+        ]
+        return "\n".join(lines)
+
+
 class SimulationResult:
     """Holds the statevector and classical bit state after a completed simulation."""
 
@@ -70,10 +106,12 @@ class SimulationResult:
         statevector: NDArray[np.complex128],
         num_qubits: int,
         classical_bits: dict[int, int],
+        profile: SimulationProfile | None = None,
     ) -> None:
         self._sv = statevector
         self._n = num_qubits
         self._cbits = classical_bits
+        self._profile = profile
 
     @property
     def statevector(self) -> NDArray[np.complex128]:
@@ -88,6 +126,11 @@ class SimulationResult:
     def classical_bits(self) -> dict[int, int]:
         """Final classical register state. Keys are absolute cbit indices."""
         return dict(self._cbits)
+
+    @property
+    def profile(self) -> SimulationProfile | None:
+        """Profiling data, or None if the simulator was not run with profile=True."""
+        return self._profile
 
     def probabilities(self, qubits: list[int] | None = None) -> dict[int, float]:
         """Full or marginal probability distribution. Keys are integer basis states.
@@ -127,8 +170,13 @@ class SimulationResult:
 class StatevectorSimulator:
     """Pure-NumPy statevector simulator for Circuit and DistributedCircuit."""
 
-    def __init__(self, seed: int | None = None) -> None:
+    def __init__(self, seed: int | None = None, profile: bool = False) -> None:
         self._rng: Generator = np.random.default_rng(seed)
+        self._profile = profile
+        # Engine function references — swapped for timed wrappers when profiling.
+        self._oq: Callable = apply_one_qubit
+        self._nq: Callable = apply_n_qubit
+        self._mq: Callable = measure_qubit
 
     def simulate(self, circuit: DistributedCircuit | Circuit) -> SimulationResult:
         """Run the circuit to completion and return the result."""
@@ -143,10 +191,20 @@ class StatevectorSimulator:
         cbits: dict[int, int] = {}
         all_idx = np.arange(1 << n, dtype=np.intp)
 
+        prof: SimulationProfile | None = None
+        if self._profile:
+            prof = SimulationProfile()
+            self._oq, self._nq, self._mq = _timed_wrappers(prof)
+
+        t0 = time.perf_counter()
         for inst in monolithic.instructions:
             self._apply(state, inst, n, cbits, all_idx)
 
-        return SimulationResult(state, n, cbits)
+        if prof is not None:
+            prof.total_time = time.perf_counter() - t0
+            self._oq, self._nq, self._mq = apply_one_qubit, apply_n_qubit, measure_qubit
+
+        return SimulationResult(state, n, cbits, profile=prof)
 
     def _apply(
         self,
@@ -163,127 +221,127 @@ class StatevectorSimulator:
             case IdInstruction():
                 pass
             case XInstruction():
-                apply_one_qubit(state, g.X, inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.X, inst.qubit, n, all_idx=all_idx)
             case YInstruction():
-                apply_one_qubit(state, g.Y, inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.Y, inst.qubit, n, all_idx=all_idx)
             case ZInstruction():
-                apply_one_qubit(state, g.Z, inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.Z, inst.qubit, n, all_idx=all_idx)
             case HInstruction():
-                apply_one_qubit(state, g.H, inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.H, inst.qubit, n, all_idx=all_idx)
             case SInstruction():
-                apply_one_qubit(state, g.S, inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.S, inst.qubit, n, all_idx=all_idx)
             case SdgInstruction():
-                apply_one_qubit(state, g.Sdg, inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.Sdg, inst.qubit, n, all_idx=all_idx)
             case TInstruction():
-                apply_one_qubit(state, g.T, inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.T, inst.qubit, n, all_idx=all_idx)
             case TdgInstruction():
-                apply_one_qubit(state, g.Tdg, inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.Tdg, inst.qubit, n, all_idx=all_idx)
             case SxInstruction():
-                apply_one_qubit(state, g.SX, inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.SX, inst.qubit, n, all_idx=all_idx)
             case SxdgInstruction():
-                apply_one_qubit(state, g.SXdg, inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.SXdg, inst.qubit, n, all_idx=all_idx)
             # ----------------------------------------------------------------
             # Single-qubit parametric
             # ----------------------------------------------------------------
             case U3Instruction():
-                apply_one_qubit(state, g.u3(inst.theta, inst.phi, inst.lam), inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.u3(inst.theta, inst.phi, inst.lam), inst.qubit, n, all_idx=all_idx)
             case U2Instruction():
-                apply_one_qubit(state, g.u2(inst.phi, inst.lam), inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.u2(inst.phi, inst.lam), inst.qubit, n, all_idx=all_idx)
             case U1Instruction():
-                apply_one_qubit(state, g.u1(inst.lam), inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.u1(inst.lam), inst.qubit, n, all_idx=all_idx)
             case UInstruction():
-                apply_one_qubit(state, g.u(inst.theta, inst.phi, inst.lam), inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.u(inst.theta, inst.phi, inst.lam), inst.qubit, n, all_idx=all_idx)
             case PInstruction():
-                apply_one_qubit(state, g.p(inst.lam), inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.p(inst.lam), inst.qubit, n, all_idx=all_idx)
             case RxInstruction():
-                apply_one_qubit(state, g.rx(inst.theta), inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.rx(inst.theta), inst.qubit, n, all_idx=all_idx)
             case RyInstruction():
-                apply_one_qubit(state, g.ry(inst.theta), inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.ry(inst.theta), inst.qubit, n, all_idx=all_idx)
             case RzInstruction():
-                apply_one_qubit(state, g.rz(inst.phi), inst.qubit, n, all_idx=all_idx)
+                self._oq(state, g.rz(inst.phi), inst.qubit, n, all_idx=all_idx)
             case U0Instruction():
                 pass  # identity / delay
             # ----------------------------------------------------------------
             # Two-qubit fixed
             # ----------------------------------------------------------------
             case CxInstruction():
-                apply_n_qubit(state, g.CNOT, [inst.control, inst.target], n, all_idx=all_idx)
+                self._nq(state, g.CNOT, [inst.control, inst.target], n, all_idx=all_idx)
             case CzInstruction():
-                apply_n_qubit(state, g.CZ, [inst.control, inst.target], n, all_idx=all_idx)
+                self._nq(state, g.CZ, [inst.control, inst.target], n, all_idx=all_idx)
             case CyInstruction():
-                apply_n_qubit(state, g.CY, [inst.control, inst.target], n, all_idx=all_idx)
+                self._nq(state, g.CY, [inst.control, inst.target], n, all_idx=all_idx)
             case ChInstruction():
-                apply_n_qubit(state, g.CH, [inst.control, inst.target], n, all_idx=all_idx)
+                self._nq(state, g.CH, [inst.control, inst.target], n, all_idx=all_idx)
             case SwapInstruction():
-                apply_n_qubit(state, g.SWAP, [inst.a, inst.b], n, all_idx=all_idx)
+                self._nq(state, g.SWAP, [inst.a, inst.b], n, all_idx=all_idx)
             case CsxInstruction():
-                apply_n_qubit(state, g.CSX, [inst.control, inst.target], n, all_idx=all_idx)
+                self._nq(state, g.CSX, [inst.control, inst.target], n, all_idx=all_idx)
             # ----------------------------------------------------------------
             # Two-qubit parametric
             # ----------------------------------------------------------------
             case CrxInstruction():
-                apply_n_qubit(state, g.crx(inst.theta), [inst.control, inst.target], n, all_idx=all_idx)
+                self._nq(state, g.crx(inst.theta), [inst.control, inst.target], n, all_idx=all_idx)
             case CryInstruction():
-                apply_n_qubit(state, g.cry(inst.theta), [inst.control, inst.target], n, all_idx=all_idx)
+                self._nq(state, g.cry(inst.theta), [inst.control, inst.target], n, all_idx=all_idx)
             case CrzInstruction():
-                apply_n_qubit(state, g.crz(inst.lam), [inst.control, inst.target], n, all_idx=all_idx)
+                self._nq(state, g.crz(inst.lam), [inst.control, inst.target], n, all_idx=all_idx)
             case Cu1Instruction():
-                apply_n_qubit(state, g.cu1(inst.lam), [inst.control, inst.target], n, all_idx=all_idx)
+                self._nq(state, g.cu1(inst.lam), [inst.control, inst.target], n, all_idx=all_idx)
             case CpInstruction():
-                apply_n_qubit(state, g.cp(inst.lam), [inst.control, inst.target], n, all_idx=all_idx)
+                self._nq(state, g.cp(inst.lam), [inst.control, inst.target], n, all_idx=all_idx)
             case Cu3Instruction():
-                apply_n_qubit(
+                self._nq(
                     state, g.cu3(inst.theta, inst.phi, inst.lam), [inst.control, inst.target], n, all_idx=all_idx
                 )
             case CuInstruction():
-                apply_n_qubit(
+                self._nq(
                     state,
                     g.cu(inst.theta, inst.phi, inst.lam, inst.gamma),
                     [inst.control, inst.target],
                     n, all_idx=all_idx,
                 )
             case RxxInstruction():
-                apply_n_qubit(state, g.rxx(inst.theta), [inst.a, inst.b], n, all_idx=all_idx)
+                self._nq(state, g.rxx(inst.theta), [inst.a, inst.b], n, all_idx=all_idx)
             case RzzInstruction():
-                apply_n_qubit(state, g.rzz(inst.theta), [inst.a, inst.b], n, all_idx=all_idx)
+                self._nq(state, g.rzz(inst.theta), [inst.a, inst.b], n, all_idx=all_idx)
             # ----------------------------------------------------------------
             # Three-qubit
             # ----------------------------------------------------------------
             case CcxInstruction():
-                apply_n_qubit(
+                self._nq(
                     state, g.CCX, [inst.control1, inst.control2, inst.target], n, all_idx=all_idx
                 )
             case CswapInstruction():
-                apply_n_qubit(
+                self._nq(
                     state, g.CSWAP, [inst.control, inst.target1, inst.target2], n, all_idx=all_idx
                 )
             case RccxInstruction():
-                apply_n_qubit(
+                self._nq(
                     state, g.RCCX, [inst.control1, inst.control2, inst.target], n, all_idx=all_idx
                 )
             case Rc3xInstruction():
-                apply_n_qubit(
+                self._nq(
                     state,
                     g.RC3X,
                     [inst.control1, inst.control2, inst.control3, inst.target],
                     n, all_idx=all_idx,
                 )
             case C3xInstruction():
-                apply_n_qubit(
+                self._nq(
                     state,
                     g.C3X,
                     [inst.control1, inst.control2, inst.control3, inst.target],
                     n, all_idx=all_idx,
                 )
             case C3sqrtxInstruction():
-                apply_n_qubit(
+                self._nq(
                     state,
                     g.C3SQRTX,
                     [inst.control1, inst.control2, inst.control3, inst.target],
                     n, all_idx=all_idx,
                 )
             case C4xInstruction():
-                apply_n_qubit(
+                self._nq(
                     state,
                     g.C4X,
                     [inst.control1, inst.control2, inst.control3, inst.control4, inst.target],
@@ -295,11 +353,11 @@ class StatevectorSimulator:
             case GateInstruction():
                 name = inst.name.lower()
                 if name == "remote_link_psi_minus":
-                    apply_n_qubit(state, g.PSI_MINUS, list(inst.qubits), n, all_idx=all_idx)
+                    self._nq(state, g.PSI_MINUS, list(inst.qubits), n, all_idx=all_idx)
                 elif name == "remote_link_psi_plus":
-                    apply_n_qubit(state, g.PSI_PLUS, list(inst.qubits), n, all_idx=all_idx)
+                    self._nq(state, g.PSI_PLUS, list(inst.qubits), n, all_idx=all_idx)
                 elif name == "nonlocal_cz":
-                    apply_n_qubit(state, g.NONLOCAL_CZ, list(inst.qubits), n, all_idx=all_idx)
+                    self._nq(state, g.NONLOCAL_CZ, list(inst.qubits), n, all_idx=all_idx)
                 else:
                     raise NotImplementedError(
                         f"Unsupported generic gate: {inst.name!r}. "
@@ -309,7 +367,7 @@ class StatevectorSimulator:
             # Measurement and classical control
             # ----------------------------------------------------------------
             case MeasureInstruction():
-                outcome, _ = measure_qubit(state, inst.qubit, n, self._rng, all_idx=all_idx)
+                outcome, _ = self._mq(state, inst.qubit, n, self._rng, all_idx=all_idx)
                 cbits[inst.cbit] = outcome
 
             case ConditionalInstruction():
@@ -318,9 +376,9 @@ class StatevectorSimulator:
                     self._apply(state, inst.op, n, cbits, all_idx)
 
             case ResetInstruction():
-                outcome, _ = measure_qubit(state, inst.qubit, n, self._rng, all_idx=all_idx)
+                outcome, _ = self._mq(state, inst.qubit, n, self._rng, all_idx=all_idx)
                 if outcome == 1:
-                    apply_one_qubit(state, g.X, inst.qubit, n, all_idx=all_idx)
+                    self._oq(state, g.X, inst.qubit, n, all_idx=all_idx)
 
             # ----------------------------------------------------------------
             # No-ops
@@ -332,6 +390,35 @@ class StatevectorSimulator:
                 raise NotImplementedError(
                     f"Unsupported instruction type: {type(inst).__name__}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Profiling helpers
+# ---------------------------------------------------------------------------
+
+def _timed_wrappers(prof: SimulationProfile):
+    """Return timed versions of the three engine functions that accumulate into prof."""
+
+    def _oq(state, u2, target, n, controls=None, all_idx=None):
+        t0 = time.perf_counter()
+        apply_one_qubit(state, u2, target, n, controls, all_idx)
+        prof.apply_one_qubit_time += time.perf_counter() - t0
+        prof.apply_one_qubit_calls += 1
+
+    def _nq(state, u, qubits, n, all_idx=None):
+        t0 = time.perf_counter()
+        apply_n_qubit(state, u, qubits, n, all_idx)
+        prof.apply_n_qubit_time += time.perf_counter() - t0
+        prof.apply_n_qubit_calls += 1
+
+    def _mq(state, qubit, n, rng, all_idx=None):
+        t0 = time.perf_counter()
+        result = measure_qubit(state, qubit, n, rng, all_idx)
+        prof.measure_qubit_time += time.perf_counter() - t0
+        prof.measure_qubit_calls += 1
+        return result
+
+    return _oq, _nq, _mq
 
 
 # ---------------------------------------------------------------------------
