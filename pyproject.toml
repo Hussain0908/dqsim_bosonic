@@ -2,14 +2,15 @@
 name = "dqsim"
 version = "0.1.0"
 description = "Native Rust statevector simulator for distributed quantum circuits"
+readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
     { name = "Elie Ben-Shlomo", email = "categoricalsolutions@gmail.com" },
 ]
 dependencies = [
-    "bosonic-model",
-    "bosonic-converters",
+    "bosonic-model>=0.1.1,<0.2.0",
+    "bosonic-converters>=0.1.0,<0.2.0",
     "numpy>=1.26",
 ]
 
