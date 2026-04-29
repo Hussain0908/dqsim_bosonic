@@ -107,3 +107,76 @@ pub enum Instruction {
     Barrier,
     Classical  { name: String },
 }
+
+impl Instruction {
+    pub fn qubits(&self) -> Vec<usize> {
+        match self {
+            Instruction::X { qubit }
+            | Instruction::Y { qubit }
+            | Instruction::Z { qubit }
+            | Instruction::H { qubit }
+            | Instruction::S { qubit }
+            | Instruction::Sdg { qubit }
+            | Instruction::T { qubit }
+            | Instruction::Tdg { qubit }
+            | Instruction::Sx { qubit }
+            | Instruction::Sxdg { qubit }
+            | Instruction::U0 { qubit }
+            | Instruction::Id { qubit }
+            | Instruction::Reset { qubit } => vec![*qubit],
+
+            Instruction::U3 { qubit, .. }
+            | Instruction::U2 { qubit, .. }
+            | Instruction::U1 { qubit, .. }
+            | Instruction::U { qubit, .. }
+            | Instruction::P { qubit, .. }
+            | Instruction::Rx { qubit, .. }
+            | Instruction::Ry { qubit, .. }
+            | Instruction::Rz { qubit, .. } => vec![*qubit],
+
+            Instruction::Measure { qubit, .. } => vec![*qubit],
+
+            Instruction::Cx { control, target }
+            | Instruction::Cz { control, target }
+            | Instruction::Cy { control, target }
+            | Instruction::Ch { control, target }
+            | Instruction::Csx { control, target }
+            | Instruction::Crx { control, target, .. }
+            | Instruction::Cry { control, target, .. }
+            | Instruction::Crz { control, target, .. }
+            | Instruction::Cu1 { control, target, .. }
+            | Instruction::Cp { control, target, .. }
+            | Instruction::Cu3 { control, target, .. }
+            | Instruction::Cu { control, target, .. } => vec![*control, *target],
+
+            Instruction::Swap { a, b }
+            | Instruction::Rxx { a, b, .. }
+            | Instruction::Rzz { a, b, .. } => vec![*a, *b],
+
+            Instruction::Ccx { control1, control2, target }
+            | Instruction::Rccx { control1, control2, target } => {
+                vec![*control1, *control2, *target]
+            }
+
+            Instruction::Cswap { control, target1, target2 } => {
+                vec![*control, *target1, *target2]
+            }
+
+            Instruction::Rc3x { control1, control2, control3, target }
+            | Instruction::C3x { control1, control2, control3, target }
+            | Instruction::C3sqrtx { control1, control2, control3, target } => {
+                vec![*control1, *control2, *control3, *target]
+            }
+
+            Instruction::C4x { control1, control2, control3, control4, target } => {
+                vec![*control1, *control2, *control3, *control4, *target]
+            }
+
+            Instruction::Gate { qubits, .. } => qubits.clone(),
+
+            Instruction::Conditional { op, .. } => op.qubits(),
+
+            Instruction::Barrier | Instruction::Classical { .. } => vec![],
+        }
+    }
+}

@@ -12,7 +12,7 @@ from bosonic_model import Circuit, Register
 from bosonic_model.instructions import CxInstruction, HInstruction, XInstruction
 from bosonic_sdk.distributor.distributors.bosonic_distributor import BosonicDistributor
 
-from dqsim import StatevectorSimulator
+from dqsim import CompositeSimulator, StatevectorSimulator
 
 SEED = 42
 
@@ -61,6 +61,14 @@ def _assert_marginals_match(original: dict[int, float], distributed: dict[int, f
         )
 
 
+def _composite_simulate(circuit: Circuit, *, nodes: int, qubits_per_node: int) -> dict[int, float]:
+    distributed = BosonicDistributor().distribute(circuit, nodes=nodes, qubits_per_node=qubits_per_node)
+    result = CompositeSimulator(seed=SEED).simulate(distributed)
+    probs = result.probabilities()
+    data_indices = result.physical_qubits[::2]  # even physical qubits are data
+    return _marginalise(probs, data_indices)
+
+
 class TestBosonicDistributorE2E:
     def test_x_cx_deterministic(self) -> None:
         """X q[0]; CX q[0]→q[1] produces |11⟩. Cross-node CX forces teleportation."""
@@ -96,3 +104,44 @@ class TestBosonicDistributorE2E:
         original = _simulate(circuit)
         distributed = _distribute_and_simulate(circuit, nodes=2, qubits_per_node=1)
         _assert_marginals_match(original, distributed)
+
+
+class TestCompositeSimulatorE2E:
+
+    def test_x_cx_deterministic(self) -> None:
+        circuit = _circuit(2, [
+            XInstruction(qubit=0, qubits=[0]),
+            CxInstruction(control=0, target=1, qubits=[0, 1], params=[]),
+        ])
+        original = _simulate(circuit)
+        result = _composite_simulate(circuit, nodes=2, qubits_per_node=1)
+        _assert_marginals_match(original, result)
+        assert abs(result.get(3, 0.0) - 1.0) < 1e-6
+
+    def test_bell_pair(self) -> None:
+        circuit = _circuit(2, [
+            HInstruction(qubit=0, qubits=[0]),
+            CxInstruction(control=0, target=1, qubits=[0, 1], params=[]),
+        ])
+        original = _simulate(circuit)
+        result = _composite_simulate(circuit, nodes=2, qubits_per_node=1)
+        _assert_marginals_match(original, result)
+
+    def test_local_only_circuit(self) -> None:
+        circuit = _circuit(2, [
+            HInstruction(qubit=0, qubits=[0]),
+            HInstruction(qubit=1, qubits=[1]),
+        ])
+        original = _simulate(circuit)
+        result = _composite_simulate(circuit, nodes=2, qubits_per_node=1)
+        _assert_marginals_match(original, result)
+
+    def test_composite_matches_monolithic_marginals(self) -> None:
+        """CompositeSimulator data-qubit marginals must equal monolithic marginals exactly."""
+        circuit = _circuit(2, [
+            HInstruction(qubit=0, qubits=[0]),
+            CxInstruction(control=0, target=1, qubits=[0, 1], params=[]),
+        ])
+        monolithic_marginals = _distribute_and_simulate(circuit, nodes=2, qubits_per_node=1)
+        composite_marginals = _composite_simulate(circuit, nodes=2, qubits_per_node=1)
+        _assert_marginals_match(monolithic_marginals, composite_marginals)
