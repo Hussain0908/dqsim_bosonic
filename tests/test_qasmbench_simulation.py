@@ -14,8 +14,48 @@ from bosonic_model.qasm import QasmError, Translator
 
 from dqsim import StatevectorSimulator
 
-# All small circuits in the registry (≤ 12 qubits by QASMBench convention)
-_ALL_SMALL = qasmpi.list_circuits(size="small")
+_ALL_SMALL = [
+    "adder_n10",
+    "adder_n4",
+    "basis_change_n3",
+    "basis_test_n4",
+    "basis_trotter_n4",
+    "bb84_n8",
+    "bell_n4",
+    "cat_state_n4",
+    "deutsch_n2",
+    "dnn_n2",
+    "dnn_n8",
+    "error_correctiond3_n5",
+    "fredkin_n3",
+    "grover_n2",
+    # "hhl_n10", -- slow, 186,801 gate ops
+    "hhl_n7",
+    "hs4_n4",
+    "inverseqft_n4",
+    "ipea_n2",
+    "ising_n10",
+    "iswap_n2",
+    "linearsolver_n3",
+    "lpn_n5",
+    "pea_n5",
+    "qaoa_n3",
+    "qaoa_n6",
+    "qec_en_n5",
+    "qec_sm_n5",
+    "qft_n4",
+    "qpe_n9",
+    "qrng_n4",
+    "quantumwalks_n2",
+    "sat_n7",
+    "shor_n5",
+    "simon_n6",
+    "teleportation_n3",
+    "toffoli_n3",
+    "variational_n4",
+    "vqe_n4",
+    "wstate_n3",
+]
 
 SEED = 42
 
