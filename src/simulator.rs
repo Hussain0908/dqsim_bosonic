@@ -463,8 +463,12 @@ fn run_instruction(
 
         // -- Classical control -------------------------------------------
         Instruction::Conditional { condition, op } => {
-            let cbit_val = *cbits.get(&condition.cbit).unwrap_or(&0);
-            if (cbit_val != 0) == condition.value {
+            let mut actual: u64 = 0;
+            for bit in 0..condition.creg_size {
+                let val = *cbits.get(&(condition.creg_base + bit)).unwrap_or(&0) as u64;
+                actual |= val << bit;
+            }
+            if actual == condition.creg_value {
                 run_instruction(state, op, n, cbits, rng, acc)?;
             }
         }

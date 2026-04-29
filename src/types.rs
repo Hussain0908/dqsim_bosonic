@@ -26,8 +26,9 @@ impl Circuit {
 
 #[derive(Deserialize, Clone)]
 pub struct Condition {
-    pub cbit: usize,
-    pub value: bool,
+    pub creg_base: usize,
+    pub creg_size: usize,
+    pub creg_value: u64,
 }
 
 #[derive(Deserialize, Clone)]
