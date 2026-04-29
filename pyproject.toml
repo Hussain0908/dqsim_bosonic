@@ -24,6 +24,7 @@ test = [
     "qasmpi>=0.1.1",
     "bosonic-model>=0.1.1,<0.2.0",
     "bosonic-converters>=0.1.0,<0.2.0",
+    "bosonic-sdk>=0.1.0,<0.2.0",
 ]
 
 [tool.pytest.ini_options]
@@ -32,6 +33,7 @@ testpaths = ["tests"]
 [tool.uv.sources]
 bosonic-model = { path = "../dqcomp/packages/bosonic-model", editable = true }
 bosonic-converters = { path = "../dqcomp/packages/bosonic-converters", editable = true }
+bosonic-sdk = { path = "../dqcomp/packages/bosonic-sdk", editable = true }
 qasmpi = { path = "../qasmpi", editable = true }
 
 [tool.maturin]

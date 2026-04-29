@@ -245,6 +245,18 @@ pub fn psi_plus() -> Mat4 {
     out
 }
 
+pub fn phi_plus() -> Mat4 {
+    // Bell state |Φ+⟩ preparation: (H⊗I) · CNOT applied to |00⟩
+    // Matches bell_pair_phi_plus_matrix() in protocols.py
+    let s = FRAC_1_SQRT_2;
+    [
+        [r(s),   r(0.0), r(s),   r(0.0)],
+        [r(0.0), r(s),   r(0.0), r(s)  ],
+        [r(0.0), r(s),   r(0.0), r(-s) ],
+        [r(s),   r(0.0), r(-s),  r(0.0)],
+    ]
+}
+
 pub const NONLOCAL_CZ: Mat4 = {
     let o = r(0.0); let i = r(1.0); let n = r(-1.0);
     [[i,o,o,o],[o,i,o,o],[o,o,i,o],[o,o,o,n]]

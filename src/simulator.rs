@@ -438,6 +438,9 @@ fn run_instruction(
         // -- Cross-node / generic ----------------------------------------
         Instruction::Gate { name, qubits, .. } => {
             match name.to_lowercase().as_str() {
+                "remote_link_phi_plus" => {
+                    do_nq(state, &m4(gates::phi_plus()), qubits, n, acc);
+                }
                 "remote_link_psi_minus" => {
                     do_nq(state, &m4(gates::psi_minus()), qubits, n, acc);
                 }
