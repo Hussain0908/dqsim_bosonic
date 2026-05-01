@@ -831,6 +831,7 @@ test = [
     { name = "bosonic-sdk" },
     { name = "pytest" },
     { name = "qasmpi" },
+    { name = "qiskit-aer" },
 ]
 
 [package.metadata]
@@ -843,6 +844,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
     { name = "qasmpi", marker = "extra == 'test'", editable = "../qasmpi" },
+    { name = "qiskit-aer", marker = "extra == 'test'", specifier = ">=0.16" },
 ]
 provides-extras = ["test"]
 

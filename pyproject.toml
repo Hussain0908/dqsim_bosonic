@@ -25,6 +25,7 @@ test = [
     "bosonic-model>=0.1.1,<0.2.0",
     "bosonic-converters>=0.1.0,<0.2.0",
     "bosonic-sdk>=0.1.0,<0.2.0",
+    "qiskit-aer>=0.16",
 ]
 
 [tool.pytest.ini_options]
