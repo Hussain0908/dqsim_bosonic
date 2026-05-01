@@ -7,7 +7,7 @@ Two timing axes are reported for each circuit:
 
   per-run (ms)
     dqsim-sv   : StatevectorSimulator.simulate()
-    dqsim-comp : BosonicDistributor.distribute() + CompositeSimulator.simulate()
+    dqsim-comp : DisqcoDistributor.distribute() + CompositeSimulator.simulate()
     aer-sv     : AerSimulator(statevector).run(qc, shots=1) on a measurement-free circuit
 
   per-shot (µs)
@@ -29,7 +29,7 @@ import pytest
 import qasmpi
 from bosonic_model.qasm import QasmError, Translator
 from bosonic_converters import CircuitConverters
-from bosonic_sdk.distributor.distributors.bosonic_distributor import BosonicDistributor
+from bosonic_sdk.distributor.distributors.disqco_distributor import DisqcoDistributor
 from qiskit_aer import AerSimulator as _AerSimulator
 
 from dqsim import CompositeSimulator, StatevectorSimulator
@@ -39,20 +39,20 @@ from dqsim import CompositeSimulator, StatevectorSimulator
 # ---------------------------------------------------------------------------
 
 SEED = 42
-SHOTS = 1
+SHOTS = 1000
 REPS = 5  # timing repetitions per metric; median is reported
 
 # (qasmpi_name, nodes, qubits_per_node)
 # nodes × qubits_per_node must be >= circuit qubit count.
 _BENCH_CIRCUITS = [
-    ("deutsch_n2",    2, 1),
-    ("toffoli_n3",    2, 2),
-    ("adder_n4",      2, 2),
-    ("qft_n4",        2, 2),
-    ("bell_n4",       2, 2),
-    ("qaoa_n6",       3, 2),
+    ("deutsch_n2",    2, 2),
+    ("toffoli_n3",    2, 3),
+    ("adder_n4",      2, 4),
+    ("qft_n4",        2, 4),
+    ("bell_n4",       2, 4),
+    # ("qaoa_n6",       3, 4),   # remote_epr / opaque subcircuits not supported with lowered=True
     # ("qpe_n9",        5, 2),   # too slow for composite sim
-    # ("ising_n10",     5, 2),  # too slow for composite sim
+    # ("ising_n10",     5, 2),   # too slow for composite sim
 ]
 
 # ---------------------------------------------------------------------------
@@ -229,8 +229,8 @@ class TestPerformance:
             raw_circuit = Translator().from_qasm(qasmpi.get_circuit(name))
             circuit_no_meas = _strip_measurements(raw_circuit)
             n = _n_qubits(circuit_no_meas)
-            distributed = BosonicDistributor().distribute(
-                circuit_no_meas, nodes=nodes, qubits_per_node=qpn
+            distributed = DisqcoDistributor().distribute(
+                circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=True
             )
 
             print(f"         dqsim-sv run ...", end="", flush=True)
@@ -268,7 +268,7 @@ class TestPerformance:
         print(_SEP)
         print(
             "  sv run(ms)   : dqsim StatevectorSimulator.simulate() — one statevector evolution\n"
-            "  comp run(ms) : BosonicDistributor.distribute() + CompositeSimulator.simulate()\n"
+            "  comp run(ms) : DisqcoDistributor.distribute() + CompositeSimulator.simulate()\n"
             "  aer run(ms)  : AerSimulator(statevector).run(shots=1) — one statevector evolution\n"
             "  *  shot(µs)  : total shot-batch time / SHOTS  (dqsim: simulate+counts; aer: run(shots=SHOTS))\n"
             "  *  speedup   : aer_run / dqsim_run  (>1 = dqsim faster)\n"

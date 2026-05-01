@@ -198,6 +198,30 @@ requires-dist = [
 ]
 
 [[package]]
+name = "bosonic-disqco"
+version = "0.0.7"
+source = { registry = "https://test.pypi.org/simple" }
+dependencies = [
+    { name = "ipykernel" },
+    { name = "jupyter-tikz" },
+    { name = "matplotlib" },
+    { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pylatexenc" },
+    { name = "pytest" },
+    { name = "qiskit" },
+    { name = "qiskit-aer" },
+    { name = "qiskit-qasm3-import" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://test-files.pythonhosted.org/packages/44/cc/888b3c4f8eb8330f7409fb802071459d85ce7e03c95a114fbf1f246cba30/bosonic_disqco-0.0.7.tar.gz", hash = "sha256:9ae6a6eeb5a53d189f224d95da4b2dea116670aede217fc1ace627334dcd324e", size = 140841, upload-time = "2026-04-17T01:21:45.031Z" }
+wheels = [
+    { url = "https://test-files.pythonhosted.org/packages/89/2c/c625f11004fa07224f0baa4f1f204c37c68b8c9f628c09b40ea709015c30/bosonic_disqco-0.0.7-py3-none-any.whl", hash = "sha256:6fe0f09a60dcda34faff9530726eb5dcae349926fb0506a6ad152587fa06a31e", size = 162621, upload-time = "2026-04-17T01:21:42.377Z" },
+]
+
+[[package]]
 name = "bosonic-model"
 version = "0.1.1"
 source = { editable = "../dqcomp/packages/bosonic-model" }
@@ -827,6 +851,7 @@ dependencies = [
 [package.optional-dependencies]
 test = [
     { name = "bosonic-converters" },
+    { name = "bosonic-disqco" },
     { name = "bosonic-model" },
     { name = "bosonic-sdk" },
     { name = "pytest" },
@@ -838,6 +863,7 @@ test = [
 requires-dist = [
     { name = "bosonic-converters", editable = "../dqcomp/packages/bosonic-converters" },
     { name = "bosonic-converters", marker = "extra == 'test'", editable = "../dqcomp/packages/bosonic-converters" },
+    { name = "bosonic-disqco", marker = "extra == 'test'", specifier = ">=0.0.7,<0.1.0", index = "https://test.pypi.org/simple" },
     { name = "bosonic-model", editable = "../dqcomp/packages/bosonic-model" },
     { name = "bosonic-model", marker = "extra == 'test'", editable = "../dqcomp/packages/bosonic-model" },
     { name = "bosonic-sdk", marker = "extra == 'test'", editable = "../dqcomp/packages/bosonic-sdk" },
@@ -1410,6 +1436,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f4/a7/bcd0a9b0cbba88986fe944aaaf91bfda603e5a50bda8ed15123f381a3b2f/jupyter_server_terminals-0.5.4.tar.gz", hash = "sha256:bbda128ed41d0be9020349f9f1f2a4ab9952a73ed5f5ac9f1419794761fb87f5", size = 31770, upload-time = "2026-01-14T16:53:20.213Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/2d/6674563f71c6320841fc300911a55143925112a72a883e2ca71fba4c618d/jupyter_server_terminals-0.5.4-py3-none-any.whl", hash = "sha256:55be353fc74a80bc7f3b20e6be50a55a61cd525626f578dcb66a5708e2007d14", size = 13704, upload-time = "2026-01-14T16:53:18.738Z" },
+]
+
+[[package]]
+name = "jupyter-tikz"
+version = "0.5.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ipython", version = "8.39.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "ipython", version = "9.13.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "jinja2" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/98/8b/98cd4473f0143dcbcba5e930a52e978440c3d890b4101d8fb9b2b38d0826/jupyter_tikz-0.5.6.tar.gz", hash = "sha256:47b7e91b62c4cf6e42a577166bfcd9a12c2d1d39ea7f8155e827df209b79d375", size = 17628, upload-time = "2024-10-10T01:09:46.751Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/39/27836de53365629aa3a5b83766df93c81f0371be37f1868b0739d85ecf8c/jupyter_tikz-0.5.6-py3-none-any.whl", hash = "sha256:7af89d165a58c6ea7e8ff6384522919184b00e65e636eb7ec2d24af69c99f612", size = 14057, upload-time = "2024-10-10T01:09:45.103Z" },
 ]
 
 [[package]]
