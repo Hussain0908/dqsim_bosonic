@@ -199,8 +199,8 @@ requires-dist = [
 
 [[package]]
 name = "bosonic-disqco"
-version = "0.0.7"
-source = { registry = "https://test.pypi.org/simple" }
+version = "0.0.8"
+source = { editable = "../DISQCO-fork" }
 dependencies = [
     { name = "ipykernel" },
     { name = "jupyter-tikz" },
@@ -216,9 +216,20 @@ dependencies = [
     { name = "qiskit-qasm3-import" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://test-files.pythonhosted.org/packages/44/cc/888b3c4f8eb8330f7409fb802071459d85ce7e03c95a114fbf1f246cba30/bosonic_disqco-0.0.7.tar.gz", hash = "sha256:9ae6a6eeb5a53d189f224d95da4b2dea116670aede217fc1ace627334dcd324e", size = 140841, upload-time = "2026-04-17T01:21:45.031Z" }
-wheels = [
-    { url = "https://test-files.pythonhosted.org/packages/89/2c/c625f11004fa07224f0baa4f1f204c37c68b8c9f628c09b40ea709015c30/bosonic_disqco-0.0.7-py3-none-any.whl", hash = "sha256:6fe0f09a60dcda34faff9530726eb5dcae349926fb0506a6ad152587fa06a31e", size = 162621, upload-time = "2026-04-17T01:21:42.377Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "ipykernel" },
+    { name = "jupyter-tikz" },
+    { name = "matplotlib" },
+    { name = "networkx" },
+    { name = "numpy", specifier = ">=1.26,<2.3.4" },
+    { name = "pylatexenc" },
+    { name = "pytest" },
+    { name = "qiskit", specifier = ">=2.2.2" },
+    { name = "qiskit-aer", specifier = ">=0.14.0" },
+    { name = "qiskit-qasm3-import", specifier = ">=0.6.0" },
+    { name = "tqdm" },
 ]
 
 [[package]]
@@ -863,7 +874,7 @@ test = [
 requires-dist = [
     { name = "bosonic-converters", editable = "../dqcomp/packages/bosonic-converters" },
     { name = "bosonic-converters", marker = "extra == 'test'", editable = "../dqcomp/packages/bosonic-converters" },
-    { name = "bosonic-disqco", marker = "extra == 'test'", specifier = ">=0.0.7,<0.1.0", index = "https://test.pypi.org/simple" },
+    { name = "bosonic-disqco", marker = "extra == 'test'", editable = "../DISQCO-fork" },
     { name = "bosonic-model", editable = "../dqcomp/packages/bosonic-model" },
     { name = "bosonic-model", marker = "extra == 'test'", editable = "../dqcomp/packages/bosonic-model" },
     { name = "bosonic-sdk", marker = "extra == 'test'", editable = "../dqcomp/packages/bosonic-sdk" },

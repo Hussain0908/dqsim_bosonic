@@ -39,18 +39,18 @@ from dqsim import CompositeSimulator, StatevectorSimulator
 # ---------------------------------------------------------------------------
 
 SEED = 42
-SHOTS = 1000
+SHOTS = 1
 REPS = 5  # timing repetitions per metric; median is reported
 
 # (qasmpi_name, nodes, qubits_per_node)
 # nodes × qubits_per_node must be >= circuit qubit count.
 _BENCH_CIRCUITS = [
-    ("deutsch_n2",    2, 2),
-    ("toffoli_n3",    2, 3),
-    ("adder_n4",      2, 4),
-    ("qft_n4",        2, 4),
-    ("bell_n4",       2, 4),
-    # ("qaoa_n6",       3, 4),   # remote_epr / opaque subcircuits not supported with lowered=True
+    # ("deutsch_n2",    2, 2),
+    # ("toffoli_n3",    2, 3),
+    # ("adder_n4",      2, 4),
+    # ("qft_n4",        2, 4),
+    # ("bell_n4",       2, 4),
+    ("qaoa_n6",       3, 2),
     # ("qpe_n9",        5, 2),   # too slow for composite sim
     # ("ising_n10",     5, 2),   # too slow for composite sim
 ]
@@ -184,12 +184,19 @@ _COL_W = {
 
 _HEADER = (
     f"{'Circuit':<16}  {'Qb':>4}  "
-    f"{'sv run(ms)':>12}  {'comp run(ms)':>13}  {'aer run(ms)':>11}  "
-    f"{'sv shot(µs)':>12}  {'comp shot(µs)':>13}  {'aer shot(µs)':>12}  "
-    f"{'sv speedup':>11}  {'comp speedup':>12}"
+    f"{'sv run(ms)':>12}  {'comp(L=T) run':>14}  {'comp(L=F) run':>14}  {'aer run(ms)':>11}  "
+    f"{'sv shot(µs)':>12}  {'comp(L=T) shot':>15}  {'comp(L=F) shot':>15}  {'aer shot(µs)':>12}  "
+    f"{'sv speedup':>11}  {'L=T speedup':>12}  {'L=F speedup':>12}"
 )
 
 _SEP = "-" * len(_HEADER)
+
+
+def _fmt_ms(v: float | None, w: int) -> str:
+    return f"{v:>{w}.2f}" if v is not None else f"{'N/A':>{w}}"
+
+def _fmt_speedup(aer: float, dqsim: float | None, w: int) -> str:
+    return f"{aer / dqsim:>{w}.1f}x" if dqsim is not None else f"{'N/A':>{w}}"
 
 
 def _row(
@@ -197,20 +204,23 @@ def _row(
     qb: int,
     sv_run: float,
     comp_run: float,
+    raw_run: float | None,
     aer_run: float,
     sv_shot_total: float,
     comp_shot_total: float,
+    raw_shot_total: float | None,
     aer_shot_total: float,
 ) -> str:
     sv_shot_us = sv_shot_total / SHOTS * 1_000
     comp_shot_us = comp_shot_total / SHOTS * 1_000
+    raw_shot_us = raw_shot_total / SHOTS * 1_000 if raw_shot_total is not None else None
     aer_shot_us = aer_shot_total / SHOTS * 1_000
 
     return (
         f"{name:<16}  {qb:>4}  "
-        f"{sv_run:>12.2f}  {comp_run:>13.2f}  {aer_run:>11.2f}  "
-        f"{sv_shot_us:>12.2f}  {comp_shot_us:>13.2f}  {aer_shot_us:>12.2f}  "
-        f"{aer_run / sv_run:>11.1f}x  {aer_run / comp_run:>12.1f}x"
+        f"{sv_run:>12.2f}  {comp_run:>14.2f}  {_fmt_ms(raw_run, 14)}  {aer_run:>11.2f}  "
+        f"{sv_shot_us:>12.2f}  {comp_shot_us:>15.2f}  {_fmt_ms(raw_shot_us, 15)}  {aer_shot_us:>12.2f}  "
+        f"{aer_run / sv_run:>11.1f}x  {aer_run / comp_run:>12.1f}x  {_fmt_speedup(aer_run, raw_run, 12)}"
     )
 
 
@@ -229,17 +239,31 @@ class TestPerformance:
             raw_circuit = Translator().from_qasm(qasmpi.get_circuit(name))
             circuit_no_meas = _strip_measurements(raw_circuit)
             n = _n_qubits(circuit_no_meas)
-            distributed = DisqcoDistributor().distribute(
-                circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=True
-            )
+            dist = DisqcoDistributor()
+            
+            distributed_lowered = dist.distribute(circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=True)
+            print(f"distributed_lowered: {distributed_lowered}", flush=True)
+
+            try:
+                distributed_raw = dist.distribute(circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=False)
+            except ValueError as exc:
+                print(f"         lowered=False unavailable: {exc}", flush=True)
+                distributed_raw = None
 
             print(f"         dqsim-sv run ...", end="", flush=True)
             sv_run = _bench_dqsim_sv_run(circuit_no_meas)
             print(f" {sv_run:.2f} ms", flush=True)
 
-            print(f"         dqsim-comp run ...", end="", flush=True)
-            comp_run = _bench_dqsim_comp_run(distributed)
+            print(f"         dqsim-comp run (lowered=True) ...", end="", flush=True)
+            comp_run = _bench_dqsim_comp_run(distributed_lowered)
             print(f" {comp_run:.2f} ms", flush=True)
+
+            if distributed_raw is not None:
+                print(f"         dqsim-comp run (lowered=False) ...", end="", flush=True)
+                raw_run = _bench_dqsim_comp_run(distributed_raw)
+                print(f" {raw_run:.2f} ms", flush=True)
+            else:
+                raw_run = None
 
             print(f"         aer-sv run ...", end="", flush=True)
             aer_run = _bench_aer_sv_run(circuit_no_meas)
@@ -249,26 +273,34 @@ class TestPerformance:
             sv_shot_total = _bench_dqsim_sv_shots(circuit_no_meas)
             print(f" {sv_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
-            print(f"         dqsim-comp {SHOTS} shots ...", end="", flush=True)
-            comp_shot_total = _bench_dqsim_comp_shots(distributed)
+            print(f"         dqsim-comp {SHOTS} shots (lowered=True) ...", end="", flush=True)
+            comp_shot_total = _bench_dqsim_comp_shots(distributed_lowered)
             print(f" {comp_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
+
+            if distributed_raw is not None:
+                print(f"         dqsim-comp {SHOTS} shots (lowered=False) ...", end="", flush=True)
+                raw_shot_total = _bench_dqsim_comp_shots(distributed_raw)
+                print(f" {raw_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
+            else:
+                raw_shot_total = None
 
             print(f"         aer {SHOTS} shots ...", end="", flush=True)
             aer_shot_total = _bench_aer_shots(circuit_no_meas)
             print(f" {aer_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
-            rows.append((name, n, sv_run, comp_run, aer_run, sv_shot_total, comp_shot_total, aer_shot_total))
+            rows.append((name, n, sv_run, comp_run, raw_run, aer_run, sv_shot_total, comp_shot_total, raw_shot_total, aer_shot_total))
             print(f"         done.", flush=True)
 
         print(f"\n\nPerformance: dqsim vs Qiskit Aer  (SHOTS={SHOTS}, REPS={REPS}, median timing)\n")
         print(_HEADER)
         print(_SEP)
-        for name, qb, sv_run, comp_run, aer_run, sv_shot, comp_shot, aer_shot in rows:
-            print(_row(name, qb, sv_run, comp_run, aer_run, sv_shot, comp_shot, aer_shot))
+        for name, qb, sv_run, comp_run, raw_run, aer_run, sv_shot, comp_shot, raw_shot, aer_shot in rows:
+            print(_row(name, qb, sv_run, comp_run, raw_run, aer_run, sv_shot, comp_shot, raw_shot, aer_shot))
         print(_SEP)
         print(
             "  sv run(ms)   : dqsim StatevectorSimulator.simulate() — one statevector evolution\n"
-            "  comp run(ms) : DisqcoDistributor.distribute() + CompositeSimulator.simulate()\n"
+            "  comp run(ms) : CompositeSimulator.simulate() on lowered=True distributed circuit\n"
+            "  raw run(ms)  : CompositeSimulator.simulate() on lowered=False distributed circuit\n"
             "  aer run(ms)  : AerSimulator(statevector).run(shots=1) — one statevector evolution\n"
             "  *  shot(µs)  : total shot-batch time / SHOTS  (dqsim: simulate+counts; aer: run(shots=SHOTS))\n"
             "  *  speedup   : aer_run / dqsim_run  (>1 = dqsim faster)\n"

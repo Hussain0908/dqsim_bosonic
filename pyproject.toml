@@ -42,7 +42,7 @@ bosonic-model = { path = "../dqcomp/packages/bosonic-model", editable = true }
 bosonic-converters = { path = "../dqcomp/packages/bosonic-converters", editable = true }
 bosonic-sdk = { path = "../dqcomp/packages/bosonic-sdk", editable = true }
 qasmpi = { path = "../qasmpi", editable = true }
-bosonic-disqco = { index = "testpypi" }
+bosonic-disqco = { path = "../DISQCO-fork", editable = true }
 
 [tool.maturin]
 module-name = "dqsim._core"
