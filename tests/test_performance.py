@@ -7,7 +7,7 @@ Two timing axes are reported for each circuit:
 
   per-run (ms)
     dqsim-sv   : StatevectorSimulator.simulate()
-    dqsim-comp : DisqcoDistributor.distribute() + CompositeSimulator.simulate()
+    dqsim-comp : HypergraphDistributor.distribute() + CompositeSimulator.simulate()
     aer-sv     : AerSimulator(statevector).run(qc, shots=1) on a measurement-free circuit
 
   per-shot (µs)
@@ -29,7 +29,7 @@ import pytest
 import qasmpi
 from bosonic_model.qasm import QasmError, Translator
 from bosonic_converters import CircuitConverters
-from bosonic_sdk.distributor.distributors.disqco_distributor import DisqcoDistributor
+from bosonic_sdk.distributor.distributors.hypergraph_distributor import HypergraphDistributor
 from bosonic_sdk.simulation.simulator import Simulator as BosonicSimulator
 
 from dqsim import CompositeSimulator, StatevectorSimulator
@@ -39,7 +39,7 @@ from dqsim import CompositeSimulator, StatevectorSimulator
 # ---------------------------------------------------------------------------
 
 SEED = 42
-SHOTS = 500
+SHOTS = 1000
 REPS = 5  # timing repetitions per metric; median is reported
 
 # (qasmpi_name, nodes, qubits_per_node)
@@ -53,6 +53,8 @@ _BENCH_CIRCUITS = [
     ("qaoa_n6",       3, 3),
     ("qpe_n9",        3, 4),
     ("ising_n10",     2, 5),
+    # ("qft_n18",       2, 9),
+    # ("square_root_n18", 2, 9),
 ]
 
 # ---------------------------------------------------------------------------
@@ -94,6 +96,29 @@ def _add_all_measurements(circuit):
 def _n_qubits(circuit) -> int:
     return max(r.base + r.size for r in circuit.qregs.values())
 
+
+def _instruction_name(inst) -> str:
+    inner = inst.op if getattr(inst, "kind", "") == "conditional" else inst
+    return str(getattr(inner, "name", getattr(inner, "kind", "")))
+
+
+def _instruction_names(distributed) -> list[str]:
+    return [_instruction_name(inst) for inst in distributed.as_monolithic_circuit().instructions]
+
+
+def _symbolic_stats(distributed) -> dict[str, int]:
+    names = _instruction_names(distributed)
+    remote_cz = sum(name == "remote_cz" for name in names)
+    remote_swap = sum(name == "remote_swap" for name in names)
+    return {
+        "remote_cz": remote_cz,
+        "remote_swap": remote_swap,
+        "ebits": remote_cz + 2 * remote_swap,
+    }
+
+
+def _lowered_ebits(distributed) -> int:
+    return sum(name == "remote_link_phi_plus" for name in _instruction_names(distributed))
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +237,7 @@ def _row(
 class TestPerformance:
     def test_benchmark_table(self) -> None:
         rows = []
+        dist = HypergraphDistributor()
 
         total = len(_BENCH_CIRCUITS)
         for idx, (name, nodes, qpn) in enumerate(_BENCH_CIRCUITS, 1):
@@ -220,21 +246,40 @@ class TestPerformance:
             raw_circuit = Translator().from_qasm(qasmpi.get_circuit(name))
             circuit_no_meas = _strip_measurements(raw_circuit)
             n = _n_qubits(circuit_no_meas)
-            dist = DisqcoDistributor()
 
-            distributed_lowered = dist.distribute(circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=True)
-            try:
-                distributed_symbolic = dist.distribute(circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=False)
-            except ValueError as exc:
-                print(f"         lowered=False unavailable: {exc}", flush=True)
-                distributed_symbolic = None
-            print(f"qubits_per_node: { {n: len(qs) for n, qs in distributed_lowered.qubits_per_node.items()} }", flush=True)
-            remote_count = sum(
-                1 for c in distributed_lowered.circuits.values()
-                for inst in c.instructions
-                if getattr(inst, 'name', '').startswith('remote_')
+            distributed_lowered = dist.distribute(
+                circuit_no_meas,
+                nodes=nodes,
+                qubits_per_node=qpn,
+                lowered=True,
             )
-            print(f"remote gates: {remote_count}", flush=True)
+            distributed_symbolic = dist.distribute(
+                circuit_no_meas,
+                nodes=nodes,
+                qubits_per_node=qpn,
+                lowered=False,
+            )
+            symbolic_stats = _symbolic_stats(distributed_symbolic)
+            try:
+                if symbolic_stats["remote_swap"]:
+                    raise ValueError(
+                        "symbolic remote_swap is not supported by dqsim CompositeSimulator; "
+                        "use lowered=True for SWAP boundaries"
+                    )
+            except ValueError as exc:
+                print(f"         lowered=False benchmark unavailable: {exc}", flush=True)
+                distributed_symbolic_for_bench = None
+            else:
+                distributed_symbolic_for_bench = distributed_symbolic
+            print(f"qubits_per_node: { {n: len(qs) for n, qs in distributed_lowered.qubits_per_node.items()} }", flush=True)
+            print(
+                "symbolic remote ops: "
+                f"remote_cz={symbolic_stats['remote_cz']} "
+                f"remote_swap={symbolic_stats['remote_swap']} "
+                f"ebits={symbolic_stats['ebits']}",
+                flush=True,
+            )
+            print(f"lowered ebits: {_lowered_ebits(distributed_lowered)}", flush=True)
 
 
             print(f"         dqsim-sv run ...", end="", flush=True)
@@ -245,9 +290,9 @@ class TestPerformance:
             comp_run = _bench_dqsim_comp_run(distributed_lowered)
             print(f" {comp_run:.2f} ms", flush=True)
 
-            if distributed_symbolic is not None:
+            if distributed_symbolic_for_bench is not None:
                 print(f"         dqsim-comp run (lowered=False) ...", end="", flush=True)
-                raw_run = _bench_dqsim_comp_run(distributed_symbolic)
+                raw_run = _bench_dqsim_comp_run(distributed_symbolic_for_bench)
                 print(f" {raw_run:.2f} ms", flush=True)
             else:
                 raw_run = None
@@ -264,9 +309,9 @@ class TestPerformance:
             comp_shot_total = _bench_dqsim_comp_shots(distributed_lowered)
             print(f" {comp_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
-            if distributed_symbolic is not None:
+            if distributed_symbolic_for_bench is not None:
                 print(f"         dqsim-comp {SHOTS} shots (lowered=False) ...", end="", flush=True)
-                raw_shot_total = _bench_dqsim_comp_shots(distributed_symbolic)
+                raw_shot_total = _bench_dqsim_comp_shots(distributed_symbolic_for_bench)
                 print(f" {raw_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
             else:
                 raw_shot_total = None
