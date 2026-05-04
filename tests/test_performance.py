@@ -39,20 +39,20 @@ from dqsim import CompositeSimulator, StatevectorSimulator
 # ---------------------------------------------------------------------------
 
 SEED = 42
-SHOTS = 1
+SHOTS = 1000
 REPS = 5  # timing repetitions per metric; median is reported
 
 # (qasmpi_name, nodes, qubits_per_node)
 # nodes × qubits_per_node must be >= circuit qubit count.
 _BENCH_CIRCUITS = [
-    # ("deutsch_n2",    2, 2),
-    # ("toffoli_n3",    2, 3),
-    # ("adder_n4",      2, 4),
-    # ("qft_n4",        2, 4),
-    # ("bell_n4",       2, 4),
-    ("qaoa_n6",       3, 2),
-    # ("qpe_n9",        5, 2),   # too slow for composite sim
-    # ("ising_n10",     5, 2),   # too slow for composite sim
+    ("deutsch_n2",    2, 1),
+    ("toffoli_n3",    2, 2),
+    ("adder_n4",      2, 2),
+    ("qft_n4",        2, 2),
+    ("bell_n4",       2, 2),
+    ("qaoa_n6",       2, 3),
+    ("qpe_n9",        2, 5),   # too slow for composite sim
+    ("ising_n10",     2, 5),   # too slow for composite sim
 ]
 
 # ---------------------------------------------------------------------------
@@ -242,7 +242,13 @@ class TestPerformance:
             dist = DisqcoDistributor()
             
             distributed_lowered = dist.distribute(circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=True)
-            print(f"distributed_lowered: {distributed_lowered}", flush=True)
+            print(f"qubits_per_node: { {n: len(qs) for n, qs in distributed_lowered.qubits_per_node.items()} }", flush=True)
+            remote_count = sum(
+                1 for c in distributed_lowered.circuits.values()
+                for inst in c.instructions
+                if getattr(inst, 'name', '').startswith('remote_')
+            )
+            print(f"remote gates: {remote_count}", flush=True)
 
             try:
                 distributed_raw = dist.distribute(circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=False)
