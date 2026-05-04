@@ -11,6 +11,8 @@ pub struct Register {
 #[derive(Deserialize)]
 pub struct Circuit {
     pub qregs: HashMap<String, Register>,
+    #[serde(default)]
+    pub cregs: HashMap<String, Register>,
     pub instructions: Vec<Instruction>,
 }
 
@@ -22,6 +24,26 @@ impl Circuit {
             .max()
             .unwrap_or(0)
     }
+
+    pub fn num_cbits(&self) -> usize {
+        self.cregs
+            .values()
+            .map(|r| r.base + r.size)
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+/// Format a cbits map as a bitstring with MSB first (Qiskit convention).
+/// Bits not written during simulation default to 0.
+pub fn format_cbits(cbits: &HashMap<usize, i32>, num_cbits: usize) -> String {
+    if num_cbits == 0 {
+        return String::new();
+    }
+    (0..num_cbits)
+        .rev()
+        .map(|i| cbits.get(&i).copied().unwrap_or(0).to_string())
+        .collect()
 }
 
 #[derive(Deserialize, Clone)]

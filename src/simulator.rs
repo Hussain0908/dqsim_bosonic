@@ -10,7 +10,7 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::engine::{apply_n_qubit, apply_one_qubit, marginal_probs, measure_qubit, sample_counts};
 use crate::gates;
-use crate::types::{Circuit, Instruction};
+use crate::types::{Circuit, Instruction, format_cbits};
 
 type C = Complex64;
 
@@ -174,6 +174,52 @@ impl StatevectorSimulator {
     #[pyo3(signature = (seed=None, profile=false))]
     pub fn new(seed: Option<u64>, profile: bool) -> Self {
         Self { seed, profile }
+    }
+
+    /// Run the circuit `shots` times independently, collapsing state on every mid-circuit
+    /// measurement per shot. Returns a dict[str, int] of bitstring counts — the true
+    /// shot distribution including classically-conditioned corrections.
+    #[pyo3(signature = (circuit, shots=1000))]
+    pub fn simulate_shots(&self, py: Python, circuit: &Bound<PyAny>, shots: usize) -> PyResult<PyObject> {
+        let monolithic = if circuit.hasattr("as_monolithic_circuit")? {
+            circuit.call_method0("as_monolithic_circuit")?
+        } else {
+            circuit.clone()
+        };
+        let json_str: String = monolithic.call_method0("model_dump_json")?.extract()?;
+        let rust_circuit: Circuit = serde_json::from_str(&json_str).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Circuit JSON parse error: {e}"))
+        })?;
+
+        let n = rust_circuit.num_qubits();
+        let num_cbits = rust_circuit.num_cbits();
+        let base_seed = self.seed.unwrap_or_else(|| rand::thread_rng().gen());
+
+        let initial_state = {
+            let mut s = vec![C::new(0.0, 0.0); 1 << n];
+            s[0] = C::new(1.0, 0.0);
+            s
+        };
+
+        let mut counts: HashMap<String, usize> = HashMap::new();
+
+        for i in 0..shots {
+            let mut state = initial_state.clone();
+            let mut cbits: HashMap<usize, i32> = HashMap::new();
+            let mut rng = ChaCha8Rng::seed_from_u64(base_seed.wrapping_add(i as u64));
+
+            for inst in &rust_circuit.instructions {
+                run_instruction(&mut state, inst, n, &mut cbits, &mut rng, &mut None)?;
+            }
+
+            *counts.entry(format_cbits(&cbits, num_cbits)).or_insert(0) += 1;
+        }
+
+        let d = PyDict::new_bound(py);
+        for (k, v) in &counts {
+            d.set_item(k, v)?;
+        }
+        Ok(d.into())
     }
 
     /// Run the circuit and return a SimulationResult.

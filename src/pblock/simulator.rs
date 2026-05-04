@@ -8,7 +8,7 @@ use rand_chacha::ChaCha8Rng;
 
 use crate::engine::{apply_n_qubit, apply_one_qubit, marginal_probs, measure_qubit};
 use crate::gates;
-use crate::types::{Circuit, Instruction};
+use crate::types::{Circuit, Instruction, format_cbits};
 
 use super::model::{Block, BlockPool, C, m4, m8, m16, m32};
 
@@ -99,6 +99,97 @@ impl CompositeSimulator {
     #[pyo3(signature = (seed=None))]
     pub fn new(seed: Option<u64>) -> Self {
         Self { seed }
+    }
+
+    /// Run the distributed circuit `shots` times independently, yielding a true
+    /// per-shot distribution that respects mid-circuit measurements and classical feedback.
+    /// The expensive Python/JSON extraction happens once; only the block simulation loops.
+    #[pyo3(signature = (distributed, shots=1000))]
+    pub fn simulate_shots(&self, py: Python, distributed: &Bound<PyAny>, shots: usize) -> PyResult<PyObject> {
+        // ── One-time setup (identical to simulate()) ──────────────────────────
+        let instr_index_py = distributed.getattr("_instruction_index")?;
+        let instr_index_dict = instr_index_py.downcast::<PyDict>()?;
+        let mut instr_index: HashMap<usize, i64> = HashMap::new();
+        for (k, v) in instr_index_dict.iter() {
+            instr_index.insert(k.extract()?, v.extract()?);
+        }
+
+        let qpn: HashMap<usize, Vec<usize>> =
+            distributed.getattr("qubits_per_node")?.extract()?;
+
+        let circuits_py = distributed.getattr("circuits")?;
+        let circuits_dict = circuits_py.downcast::<PyDict>()?;
+
+        let mut nodes: Vec<usize> = circuits_dict
+            .iter()
+            .map(|(k, _)| k.extract::<usize>().unwrap())
+            .collect();
+        nodes.sort();
+
+        let mut seen_ids: HashSet<usize> = HashSet::new();
+        let mut entries: Vec<(i64, usize, usize)> = Vec::new();
+        let mut fallback_order: i64 = i64::MAX / 2;
+        let mut node_circuit_jsons: HashMap<usize, String> = HashMap::new();
+
+        for &node in &nodes {
+            let circuit_py = circuits_dict.get_item(node)?.expect("node not in circuits dict");
+            let json: String = circuit_py.call_method0("model_dump_json")?.extract()?;
+            node_circuit_jsons.insert(node, json);
+
+            let instructions_list = circuit_py
+                .getattr("instructions")?
+                .downcast::<PyList>()?
+                .to_owned();
+
+            for (local_idx, inst_py) in instructions_list.iter().enumerate() {
+                let py_id = inst_py.as_ptr() as usize;
+                if seen_ids.contains(&py_id) { continue; }
+                seen_ids.insert(py_id);
+                let order = instr_index.get(&py_id).copied().unwrap_or_else(|| {
+                    let o = fallback_order; fallback_order += 1; o
+                });
+                entries.push((order, node, local_idx));
+            }
+        }
+        entries.sort_by_key(|e| e.0);
+
+        let node_circuits: HashMap<usize, Circuit> = node_circuit_jsons
+            .iter()
+            .map(|(&node, json)| {
+                let c: Circuit = serde_json::from_str(json).map_err(|e| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "Circuit JSON parse error for node {node}: {e}"
+                    ))
+                })?;
+                Ok((node, c))
+            })
+            .collect::<PyResult<_>>()?;
+
+        let num_cbits = node_circuits.values().map(|c| c.num_cbits()).max().unwrap_or(0);
+        let base_seed = self.seed.unwrap_or_else(|| rand::thread_rng().gen());
+        let mut counts: HashMap<String, usize> = HashMap::new();
+
+        // ── Shot loop — reinitialise blocks each time ─────────────────────────
+        for i in 0..shots {
+            let mut pool = BlockPool::new(&qpn);
+            let mut cbits: HashMap<usize, i32> = HashMap::new();
+            let mut rng = ChaCha8Rng::seed_from_u64(base_seed.wrapping_add(i as u64));
+
+            for (_, node, local_idx) in &entries {
+                let inst = &node_circuits[node].instructions[*local_idx];
+                let qubits = inst.qubits();
+                if qubits.is_empty() { continue; }
+                let block_idx = pool.ensure_single_block(&qubits);
+                let block = pool.blocks[block_idx].as_mut().unwrap();
+                dispatch(block, inst, &mut cbits, &mut rng)?;
+            }
+
+            *counts.entry(format_cbits(&cbits, num_cbits)).or_insert(0) += 1;
+        }
+
+        let d = PyDict::new_bound(py);
+        for (k, v) in &counts { d.set_item(k, v)?; }
+        Ok(d.into())
     }
 
     /// Simulate a DistributedCircuit using block-composite statevectors.

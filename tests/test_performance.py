@@ -107,14 +107,9 @@ def _bench_dqsim_sv_run(circuit) -> float:
 
 
 def _bench_dqsim_sv_shots(circuit) -> float:
-    """Median time (ms) for simulate() + counts(SHOTS)."""
+    """Median time (ms) for simulate_shots() — true per-shot trajectories."""
     sim = StatevectorSimulator(seed=SEED)
-
-    def run():
-        result = sim.simulate(circuit)
-        result.counts(SHOTS, seed=SEED)
-
-    return _median_ms(run)
+    return _median_ms(lambda: sim.simulate_shots(circuit, shots=SHOTS))
 
 
 def _bench_dqsim_comp_run(distributed) -> float:
@@ -124,20 +119,9 @@ def _bench_dqsim_comp_run(distributed) -> float:
 
 
 def _bench_dqsim_comp_shots(distributed) -> float:
-    """Median time (ms) for CompositeSimulator.simulate() + SHOTS samples."""
+    """Median time (ms) for simulate_shots() — true per-shot trajectories."""
     sim = CompositeSimulator(seed=SEED)
-    rng = np.random.default_rng(SEED)
-
-    def run():
-        result = sim.simulate(distributed)
-        probs = result.probabilities()
-        if probs:
-            states = list(probs.keys())
-            weights = np.array([probs[s] for s in states], dtype=float)
-            weights /= weights.sum()
-            rng.choice(states, size=SHOTS, p=weights)
-
-    return _median_ms(run)
+    return _median_ms(lambda: sim.simulate_shots(distributed, shots=SHOTS))
 
 
 def _bench_aer_sv_run(circuit) -> float:
