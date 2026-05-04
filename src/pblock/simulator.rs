@@ -5,13 +5,13 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use rayon::prelude::*;
 
-use crate::engine::{apply_n_qubit, apply_one_qubit, marginal_probs, measure_qubit};
+use crate::engine::{apply_n_qubit, apply_one_qubit, apply_n_qubit_seq, apply_one_qubit_seq, measure_qubit, measure_qubit_seq, marginal_probs};
 use crate::gates;
-use crate::types::{Circuit, Instruction, format_cbits};
+use crate::types::{Circuit, FusedCompositeEntry, Instruction, format_cbits, fuse_composite_entries};
 
 use super::model::{Block, BlockPool, C, m4, m8, m16, m32};
-
 
 // ---------------------------------------------------------------------------
 // CompositeResult
@@ -167,25 +167,50 @@ impl CompositeSimulator {
 
         let num_cbits = node_circuits.values().map(|c| c.num_cbits()).max().unwrap_or(0);
         let base_seed = self.seed.unwrap_or_else(|| rand::thread_rng().gen());
-        let mut counts: HashMap<String, usize> = HashMap::new();
 
-        // ── Shot loop — reinitialise blocks each time ─────────────────────────
-        for i in 0..shots {
-            let mut pool = BlockPool::new(&qpn);
-            let mut cbits: HashMap<usize, i32> = HashMap::new();
-            let mut rng = ChaCha8Rng::seed_from_u64(base_seed.wrapping_add(i as u64));
+        // Pre-fuse consecutive single-qubit gates across the globally-sorted stream.
+        let fused_entries = fuse_composite_entries(&entries, &node_circuits);
 
-            for (_, node, local_idx) in &entries {
-                let inst = &node_circuits[node].instructions[*local_idx];
-                let qubits = inst.qubits();
-                if qubits.is_empty() { continue; }
-                let block_idx = pool.ensure_single_block(&qubits);
-                let block = pool.blocks[block_idx].as_mut().unwrap();
-                dispatch(block, inst, &mut cbits, &mut rng)?;
-            }
+        // ── Shot loop — parallel across shots via rayon ───────────────────────
+        let counts = py.allow_threads(|| -> Result<HashMap<String, usize>, String> {
+            (0..shots)
+                .into_par_iter()
+                .map(|i| -> Result<String, String> {
+                    let mut pool = BlockPool::new(&qpn);
+                    let mut cbits: HashMap<usize, i32> = HashMap::new();
+                    let mut rng = ChaCha8Rng::seed_from_u64(base_seed.wrapping_add(i as u64));
 
-            *counts.entry(format_cbits(&cbits, num_cbits)).or_insert(0) += 1;
-        }
+                    for entry in &fused_entries {
+                        match entry {
+                            FusedCompositeEntry::Fused1Q { qubit, matrix } => {
+                                let block_idx = pool.ensure_single_block(&[*qubit]);
+                                let block = pool.blocks[block_idx].as_mut().unwrap();
+                                let local_q = block.local(*qubit);
+                                let n = block.qubits.len();
+                                apply_one_qubit_seq(&mut block.state, matrix, local_q, n, &[]);
+                            }
+                            FusedCompositeEntry::Original { node, local_idx } => {
+                                let inst = &node_circuits[node].instructions[*local_idx];
+                                let qubits = inst.qubits();
+                                if qubits.is_empty() { continue; }
+                                let block_idx = pool.ensure_single_block(&qubits);
+                                let block = pool.blocks[block_idx].as_mut().unwrap();
+                                dispatch_par(block, inst, &mut cbits, &mut rng)?;
+                            }
+                        }
+                    }
+
+                    Ok(format_cbits(&cbits, num_cbits))
+                })
+                .try_fold(
+                    || HashMap::new(),
+                    |mut m, r| { let k = r?; *m.entry(k).or_insert(0) += 1; Ok(m) },
+                )
+                .try_reduce(
+                    || HashMap::new(),
+                    |mut a, b| { for (k, v) in b { *a.entry(k).or_insert(0) += v; } Ok(a) },
+                )
+        }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
 
         let d = PyDict::new_bound(py);
         for (k, v) in &counts { d.set_item(k, v)?; }
@@ -279,18 +304,80 @@ impl CompositeSimulator {
         let seed = self.seed.unwrap_or_else(|| rand::thread_rng().gen());
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
-        // ── 6. Execute instructions in global order ───────────────────────────
-        for (_, node, local_idx) in &entries {
-            let inst = &node_circuits[node].instructions[*local_idx];
-            let qubits = inst.qubits();
+        // ── 6. Execute instructions in global order (epoch-parallel) ─────────
 
-            if qubits.is_empty() {
-                continue;
+        let mut cursor = 0;
+        while cursor < entries.len() {
+            // Greedily build an epoch: consecutive entries on distinct single blocks
+            let mut epoch: Vec<(usize, usize)> = vec![]; // (entry_idx, block_idx)
+            let mut epoch_block_set: HashSet<usize> = HashSet::new();
+            let mut j = cursor;
+
+            loop {
+                if j >= entries.len() { break; }
+                let (_, node, local_idx) = entries[j];
+                let inst = &node_circuits[&node].instructions[local_idx];
+                let qubits = inst.qubits();
+                if qubits.is_empty() { j += 1; continue; }
+
+                // Which blocks does this instruction touch?
+                let inst_blocks: Vec<usize> = qubits.iter()
+                    .filter_map(|q| pool.qubit_to_block.get(q).copied())
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect();
+
+                if inst_blocks.len() != 1 { break; } // needs merge
+                let blk = inst_blocks[0];
+                if epoch_block_set.contains(&blk) { break; } // same block twice
+
+                epoch.push((j, blk));
+                epoch_block_set.insert(blk);
+                j += 1;
             }
 
-            let block_idx = pool.ensure_single_block(&qubits);
-            let block = pool.blocks[block_idx].as_mut().unwrap();
-            dispatch(block, inst, &mut cbits, &mut rng)?;
+            if epoch.len() > 1 {
+                // Generate deterministic seeds for each parallel gate from the main rng
+                let gate_seeds: Vec<u64> = (0..epoch.len()).map(|_| rng.gen()).collect();
+                let mut per_cbits: Vec<HashMap<usize, i32>> =
+                    (0..epoch.len()).map(|_| HashMap::new()).collect();
+
+                // SAFETY: each iteration accesses a unique block_idx, so no aliasing.
+                // We split `per_cbits` entries and pair each with a unique &mut Block.
+                let raw = pool.blocks.as_mut_ptr();
+                let mut tasks: Vec<(&mut Option<Block>, &mut HashMap<usize, i32>, &Instruction, u64)> =
+                    per_cbits.iter_mut().enumerate().map(|(k, local_cbits)| {
+                        let (entry_idx, block_idx) = epoch[k];
+                        let gate_seed = gate_seeds[k];
+                        let (_, node, local_idx) = entries[entry_idx];
+                        let inst = &node_circuits[&node].instructions[local_idx];
+                        // SAFETY: epoch guarantees distinct block_idx for each k
+                        let opt_block: &mut Option<Block> = unsafe { &mut *raw.add(block_idx) };
+                        (opt_block, local_cbits, inst, gate_seed)
+                    }).collect();
+
+                tasks.par_iter_mut().for_each(|(opt_block, local_cbits, inst, gate_seed)| {
+                    let block = opt_block.as_mut().expect("block should exist");
+                    let mut gate_rng = ChaCha8Rng::seed_from_u64(*gate_seed);
+                    dispatch_par(block, inst, local_cbits, &mut gate_rng).unwrap();
+                });
+
+                for local in per_cbits {
+                    cbits.extend(local);
+                }
+                cursor = j;
+            } else {
+                // Sequential: handle current instruction (may need a merge)
+                let (_, node, local_idx) = entries[cursor];
+                let inst = &node_circuits[&node].instructions[local_idx];
+                let qubits = inst.qubits();
+                if !qubits.is_empty() {
+                    let block_idx = pool.ensure_single_block(&qubits);
+                    let block = pool.blocks[block_idx].as_mut().unwrap();
+                    dispatch(block, inst, &mut cbits, &mut rng)?;
+                }
+                cursor += 1;
+            }
         }
 
         // ── 7. Combine all remaining blocks into final result ─────────────────
@@ -547,3 +634,244 @@ fn dispatch(
     }
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// GIL-free instruction dispatcher (used inside py.allow_threads for parallel shots
+// and intra-shot epoch parallelism)
+// ---------------------------------------------------------------------------
+
+fn dispatch_par(
+    block: &mut Block,
+    inst: &Instruction,
+    cbits: &mut HashMap<usize, i32>,
+    rng: &mut impl Rng,
+) -> Result<(), String> {
+    let n = block.qubits.len();
+
+    match inst {
+        Instruction::Id { .. } | Instruction::U0 { .. } => {}
+
+        Instruction::X { qubit } => { let q = block.local(*qubit); apply_one_qubit_seq(&mut block.state, &gates::X, q, n, &[]); }
+        Instruction::Y { qubit } => { let q = block.local(*qubit); apply_one_qubit_seq(&mut block.state, &gates::Y, q, n, &[]); }
+        Instruction::Z { qubit } => { let q = block.local(*qubit); apply_one_qubit_seq(&mut block.state, &gates::Z, q, n, &[]); }
+        Instruction::H { qubit } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::h(), q, n, &[]);
+        }
+        Instruction::S { qubit } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::s_gate(), q, n, &[]);
+        }
+        Instruction::Sdg { qubit } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::sdg(), q, n, &[]);
+        }
+        Instruction::T { qubit } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::t_gate(), q, n, &[]);
+        }
+        Instruction::Tdg { qubit } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::tdg(), q, n, &[]);
+        }
+        Instruction::Sx { qubit } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::sx(), q, n, &[]);
+        }
+        Instruction::Sxdg { qubit } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::sxdg(), q, n, &[]);
+        }
+
+        Instruction::U3 { qubit, theta, phi, lam } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::u3(*theta, *phi, *lam), q, n, &[]);
+        }
+        Instruction::U2 { qubit, phi, lam } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::u2(*phi, *lam), q, n, &[]);
+        }
+        Instruction::U1 { qubit, lam } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::u1(*lam), q, n, &[]);
+        }
+        Instruction::U { qubit, theta, phi, lam } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::u(*theta, *phi, *lam), q, n, &[]);
+        }
+        Instruction::P { qubit, lam } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::p(*lam), q, n, &[]);
+        }
+        Instruction::Rx { qubit, theta } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::rx(*theta), q, n, &[]);
+        }
+        Instruction::Ry { qubit, theta } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::ry(*theta), q, n, &[]);
+        }
+        Instruction::Rz { qubit, phi } => {
+            let q = block.local(*qubit);
+            apply_one_qubit_seq(&mut block.state, &gates::rz(*phi), q, n, &[]);
+        }
+
+        Instruction::Cx { control, target } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::cnot()), &qs, n);
+        }
+        Instruction::Cz { control, target } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::cz()), &qs, n);
+        }
+        Instruction::Cy { control, target } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::cy()), &qs, n);
+        }
+        Instruction::Ch { control, target } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::ch()), &qs, n);
+        }
+        Instruction::Swap { a, b } => {
+            let qs = [block.local(*a), block.local(*b)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::swap()), &qs, n);
+        }
+        Instruction::Csx { control, target } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::csx()), &qs, n);
+        }
+        Instruction::Crx { control, target, theta } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::crx(*theta)), &qs, n);
+        }
+        Instruction::Cry { control, target, theta } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::cry(*theta)), &qs, n);
+        }
+        Instruction::Crz { control, target, lam } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::crz(*lam)), &qs, n);
+        }
+        Instruction::Cu1 { control, target, lam } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::cu1(*lam)), &qs, n);
+        }
+        Instruction::Cp { control, target, lam } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::cp(*lam)), &qs, n);
+        }
+        Instruction::Cu3 { control, target, theta, phi, lam } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::cu3(*theta, *phi, *lam)), &qs, n);
+        }
+        Instruction::Cu { control, target, theta, phi, lam, gamma } => {
+            let qs = [block.local(*control), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::cu(*theta, *phi, *lam, *gamma)), &qs, n);
+        }
+        Instruction::Rxx { a, b, theta } => {
+            let qs = [block.local(*a), block.local(*b)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::rxx(*theta)), &qs, n);
+        }
+        Instruction::Rzz { a, b, theta } => {
+            let qs = [block.local(*a), block.local(*b)];
+            apply_n_qubit_seq(&mut block.state, &m4(gates::rzz(*theta)), &qs, n);
+        }
+
+        Instruction::Ccx { control1, control2, target } => {
+            let qs = [block.local(*control1), block.local(*control2), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m8(gates::ccx()), &qs, n);
+        }
+        Instruction::Cswap { control, target1, target2 } => {
+            let qs = [block.local(*control), block.local(*target1), block.local(*target2)];
+            apply_n_qubit_seq(&mut block.state, &m8(gates::cswap()), &qs, n);
+        }
+        Instruction::Rccx { control1, control2, target } => {
+            let qs = [block.local(*control1), block.local(*control2), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m8(gates::rccx()), &qs, n);
+        }
+        Instruction::Rc3x { control1, control2, control3, target } => {
+            let qs = [block.local(*control1), block.local(*control2), block.local(*control3), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m16(gates::rc3x()), &qs, n);
+        }
+        Instruction::C3x { control1, control2, control3, target } => {
+            let qs = [block.local(*control1), block.local(*control2), block.local(*control3), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m16(gates::c3x()), &qs, n);
+        }
+        Instruction::C3sqrtx { control1, control2, control3, target } => {
+            let qs = [block.local(*control1), block.local(*control2), block.local(*control3), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m16(gates::c3sqrtx()), &qs, n);
+        }
+        Instruction::C4x { control1, control2, control3, control4, target } => {
+            let qs = [block.local(*control1), block.local(*control2), block.local(*control3), block.local(*control4), block.local(*target)];
+            apply_n_qubit_seq(&mut block.state, &m32(gates::c4x()), &qs, n);
+        }
+
+        Instruction::Gate { name, qubits, .. } => {
+            let lqs: Vec<usize> = qubits.iter().map(|&q| block.local(q)).collect();
+            match name.to_lowercase().as_str() {
+                "remote_link_phi_plus" => {
+                    apply_n_qubit_seq(&mut block.state, &m4(gates::phi_plus()), &lqs, n);
+                }
+                "remote_link_psi_minus" => {
+                    apply_n_qubit_seq(&mut block.state, &m4(gates::psi_minus()), &lqs, n);
+                }
+                "remote_link_psi_plus" => {
+                    apply_n_qubit_seq(&mut block.state, &m4(gates::psi_plus()), &lqs, n);
+                }
+                "nonlocal_cz" | "remote_cz" => {
+                    apply_n_qubit_seq(&mut block.state, &m4(gates::cz()), &lqs, n);
+                }
+                "remote_cx" => {
+                    apply_n_qubit_seq(&mut block.state, &m4(gates::cnot()), &lqs, n);
+                }
+                "remote_barrier" | "remote_cu1" => {
+                    // remote_barrier is a no-op; remote_cu1 is opaque with no params
+                }
+                "remote_epr" => {
+                    apply_n_qubit_seq(&mut block.state, &m4(gates::phi_plus()), &lqs, n);
+                }
+                other if other.starts_with("circuit-") => {
+                    // opaque Qiskit subcircuit — no-op for performance benchmarking
+                }
+                "teleport" => {
+                    return Err(
+                        "Symbolic 'teleport' gate cannot be simulated natively. \
+                         Distribute with lowered=True to get a decomposed circuit.".to_string()
+                    );
+                }
+                other => {
+                    return Err(format!("Unsupported gate in composite simulator: {other:?}"));
+                }
+            }
+        }
+
+        Instruction::Measure { qubit, cbit } => {
+            let q = block.local(*qubit);
+            let outcome = measure_qubit_seq(&mut block.state, q, n, rng);
+            cbits.insert(*cbit, outcome as i32);
+        }
+
+        Instruction::Conditional { condition, op } => {
+            let mut actual: u64 = 0;
+            for bit in 0..condition.creg_size {
+                let val = *cbits.get(&(condition.creg_base + bit)).unwrap_or(&0) as u64;
+                actual |= val << bit;
+            }
+            if actual == condition.creg_value {
+                dispatch_par(block, op, cbits, rng)?;
+            }
+        }
+
+        Instruction::Reset { qubit } => {
+            let q = block.local(*qubit);
+            let outcome = measure_qubit_seq(&mut block.state, q, n, rng);
+            if outcome == 1 {
+                apply_one_qubit_seq(&mut block.state, &gates::X, q, n, &[]);
+            }
+        }
+
+        Instruction::Barrier | Instruction::Classical { .. } => {}
+    }
+    Ok(())
+}
+

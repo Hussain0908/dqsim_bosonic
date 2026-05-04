@@ -59,7 +59,7 @@ pub(super) fn merge_blocks(a: Block, b: Block) -> Block {
 
 pub(super) struct BlockPool {
     pub(super) blocks: Vec<Option<Block>>,
-    qubit_to_block: HashMap<usize, usize>,
+    pub(super) qubit_to_block: HashMap<usize, usize>,
 }
 
 impl BlockPool {

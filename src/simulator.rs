@@ -7,10 +7,11 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use rayon::prelude::*;
 
-use crate::engine::{apply_n_qubit, apply_one_qubit, marginal_probs, measure_qubit, sample_counts};
+use crate::engine::{apply_n_qubit, apply_one_qubit, apply_n_qubit_seq, apply_one_qubit_seq, measure_qubit, measure_qubit_seq, marginal_probs, sample_counts};
 use crate::gates;
-use crate::types::{Circuit, Instruction, format_cbits};
+use crate::types::{Circuit, FusedInstruction, Instruction, format_cbits, fuse_circuit};
 
 type C = Complex64;
 
@@ -201,19 +202,30 @@ impl StatevectorSimulator {
             s
         };
 
-        let mut counts: HashMap<String, usize> = HashMap::new();
+        // Fuse consecutive single-qubit gates once, before the parallel shot loop.
+        let fused = fuse_circuit(&rust_circuit.instructions);
 
-        for i in 0..shots {
-            let mut state = initial_state.clone();
-            let mut cbits: HashMap<usize, i32> = HashMap::new();
-            let mut rng = ChaCha8Rng::seed_from_u64(base_seed.wrapping_add(i as u64));
-
-            for inst in &rust_circuit.instructions {
-                run_instruction(&mut state, inst, n, &mut cbits, &mut rng, &mut None)?;
-            }
-
-            *counts.entry(format_cbits(&cbits, num_cbits)).or_insert(0) += 1;
-        }
+        let counts = py.allow_threads(|| -> Result<HashMap<String, usize>, String> {
+            (0..shots)
+                .into_par_iter()
+                .map(|i| -> Result<String, String> {
+                    let mut state = initial_state.clone();
+                    let mut cbits: HashMap<usize, i32> = HashMap::new();
+                    let mut rng = ChaCha8Rng::seed_from_u64(base_seed.wrapping_add(i as u64));
+                    for fi in &fused {
+                        run_fused_par(&mut state, fi, n, &mut cbits, &mut rng)?;
+                    }
+                    Ok(format_cbits(&cbits, num_cbits))
+                })
+                .try_fold(
+                    || HashMap::new(),
+                    |mut m, r| { let k = r?; *m.entry(k).or_insert(0) += 1; Ok(m) },
+                )
+                .try_reduce(
+                    || HashMap::new(),
+                    |mut a, b| { for (k, v) in b { *a.entry(k).or_insert(0) += v; } Ok(a) },
+                )
+        }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
 
         let d = PyDict::new_bound(py);
         for (k, v) in &counts {
@@ -543,6 +555,258 @@ fn run_instruction(
         Instruction::Barrier | Instruction::Classical { .. } => {}
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// GIL-free instruction dispatcher (used inside py.allow_threads for parallel shots)
+// ---------------------------------------------------------------------------
+
+fn run_instruction_par(
+    state: &mut Vec<C>,
+    inst: &Instruction,
+    n: usize,
+    cbits: &mut HashMap<usize, i32>,
+    rng: &mut impl Rng,
+) -> Result<(), String> {
+    match inst {
+        // -- Single-qubit fixed ------------------------------------------
+        Instruction::Id { .. } | Instruction::U0 { .. } => {}
+
+        Instruction::X { qubit } => apply_one_qubit_seq(state, &gates::X, *qubit, n, &[]),
+        Instruction::Y { qubit } => apply_one_qubit_seq(state, &gates::Y, *qubit, n, &[]),
+        Instruction::Z { qubit } => apply_one_qubit_seq(state, &gates::Z, *qubit, n, &[]),
+        Instruction::H { qubit } => {
+            apply_one_qubit_seq(state, &gates::h(), *qubit, n, &[]);
+        }
+        Instruction::S { qubit } => {
+            apply_one_qubit_seq(state, &gates::s_gate(), *qubit, n, &[]);
+        }
+        Instruction::Sdg { qubit } => {
+            apply_one_qubit_seq(state, &gates::sdg(), *qubit, n, &[]);
+        }
+        Instruction::T { qubit } => {
+            apply_one_qubit_seq(state, &gates::t_gate(), *qubit, n, &[]);
+        }
+        Instruction::Tdg { qubit } => {
+            apply_one_qubit_seq(state, &gates::tdg(), *qubit, n, &[]);
+        }
+        Instruction::Sx { qubit } => {
+            apply_one_qubit_seq(state, &gates::sx(), *qubit, n, &[]);
+        }
+        Instruction::Sxdg { qubit } => {
+            apply_one_qubit_seq(state, &gates::sxdg(), *qubit, n, &[]);
+        }
+
+        // -- Single-qubit parametric -------------------------------------
+        Instruction::U3 { qubit, theta, phi, lam } => {
+            apply_one_qubit_seq(state, &gates::u3(*theta, *phi, *lam), *qubit, n, &[]);
+        }
+        Instruction::U2 { qubit, phi, lam } => {
+            apply_one_qubit_seq(state, &gates::u2(*phi, *lam), *qubit, n, &[]);
+        }
+        Instruction::U1 { qubit, lam } => {
+            apply_one_qubit_seq(state, &gates::u1(*lam), *qubit, n, &[]);
+        }
+        Instruction::U { qubit, theta, phi, lam } => {
+            apply_one_qubit_seq(state, &gates::u(*theta, *phi, *lam), *qubit, n, &[]);
+        }
+        Instruction::P { qubit, lam } => {
+            apply_one_qubit_seq(state, &gates::p(*lam), *qubit, n, &[]);
+        }
+        Instruction::Rx { qubit, theta } => {
+            apply_one_qubit_seq(state, &gates::rx(*theta), *qubit, n, &[]);
+        }
+        Instruction::Ry { qubit, theta } => {
+            apply_one_qubit_seq(state, &gates::ry(*theta), *qubit, n, &[]);
+        }
+        Instruction::Rz { qubit, phi } => {
+            apply_one_qubit_seq(state, &gates::rz(*phi), *qubit, n, &[]);
+        }
+
+        // -- Two-qubit fixed ---------------------------------------------
+        Instruction::Cx { control, target } => {
+            apply_n_qubit_seq(state, &m4(gates::cnot()), &[*control, *target], n);
+        }
+        Instruction::Cz { control, target } => {
+            apply_n_qubit_seq(state, &m4(gates::cz()), &[*control, *target], n);
+        }
+        Instruction::Cy { control, target } => {
+            apply_n_qubit_seq(state, &m4(gates::cy()), &[*control, *target], n);
+        }
+        Instruction::Ch { control, target } => {
+            apply_n_qubit_seq(state, &m4(gates::ch()), &[*control, *target], n);
+        }
+        Instruction::Swap { a, b } => {
+            apply_n_qubit_seq(state, &m4(gates::swap()), &[*a, *b], n);
+        }
+        Instruction::Csx { control, target } => {
+            apply_n_qubit_seq(state, &m4(gates::csx()), &[*control, *target], n);
+        }
+
+        // -- Two-qubit parametric ----------------------------------------
+        Instruction::Crx { control, target, theta } => {
+            apply_n_qubit_seq(state, &m4(gates::crx(*theta)), &[*control, *target], n);
+        }
+        Instruction::Cry { control, target, theta } => {
+            apply_n_qubit_seq(state, &m4(gates::cry(*theta)), &[*control, *target], n);
+        }
+        Instruction::Crz { control, target, lam } => {
+            apply_n_qubit_seq(state, &m4(gates::crz(*lam)), &[*control, *target], n);
+        }
+        Instruction::Cu1 { control, target, lam } => {
+            apply_n_qubit_seq(state, &m4(gates::cu1(*lam)), &[*control, *target], n);
+        }
+        Instruction::Cp { control, target, lam } => {
+            apply_n_qubit_seq(state, &m4(gates::cp(*lam)), &[*control, *target], n);
+        }
+        Instruction::Cu3 { control, target, theta, phi, lam } => {
+            apply_n_qubit_seq(state, &m4(gates::cu3(*theta, *phi, *lam)), &[*control, *target], n);
+        }
+        Instruction::Cu { control, target, theta, phi, lam, gamma } => {
+            apply_n_qubit_seq(
+                state,
+                &m4(gates::cu(*theta, *phi, *lam, *gamma)),
+                &[*control, *target],
+                n,
+            );
+        }
+        Instruction::Rxx { a, b, theta } => {
+            apply_n_qubit_seq(state, &m4(gates::rxx(*theta)), &[*a, *b], n);
+        }
+        Instruction::Rzz { a, b, theta } => {
+            apply_n_qubit_seq(state, &m4(gates::rzz(*theta)), &[*a, *b], n);
+        }
+
+        // -- Three-qubit -------------------------------------------------
+        Instruction::Ccx { control1, control2, target } => {
+            apply_n_qubit_seq(state, &m8(gates::ccx()), &[*control1, *control2, *target], n);
+        }
+        Instruction::Cswap { control, target1, target2 } => {
+            apply_n_qubit_seq(state, &m8(gates::cswap()), &[*control, *target1, *target2], n);
+        }
+        Instruction::Rccx { control1, control2, target } => {
+            apply_n_qubit_seq(state, &m8(gates::rccx()), &[*control1, *control2, *target], n);
+        }
+
+        // -- Four-qubit --------------------------------------------------
+        Instruction::Rc3x { control1, control2, control3, target } => {
+            apply_n_qubit_seq(
+                state,
+                &m16(gates::rc3x()),
+                &[*control1, *control2, *control3, *target],
+                n,
+            );
+        }
+        Instruction::C3x { control1, control2, control3, target } => {
+            apply_n_qubit_seq(
+                state,
+                &m16(gates::c3x()),
+                &[*control1, *control2, *control3, *target],
+                n,
+            );
+        }
+        Instruction::C3sqrtx { control1, control2, control3, target } => {
+            apply_n_qubit_seq(
+                state,
+                &m16(gates::c3sqrtx()),
+                &[*control1, *control2, *control3, *target],
+                n,
+            );
+        }
+
+        // -- Five-qubit --------------------------------------------------
+        Instruction::C4x { control1, control2, control3, control4, target } => {
+            apply_n_qubit_seq(
+                state,
+                &m32(gates::c4x()),
+                &[*control1, *control2, *control3, *control4, *target],
+                n,
+            );
+        }
+
+        // -- Cross-node / generic ----------------------------------------
+        Instruction::Gate { name, qubits, .. } => {
+            match name.to_lowercase().as_str() {
+                "remote_link_phi_plus" => {
+                    apply_n_qubit_seq(state, &m4(gates::phi_plus()), qubits, n);
+                }
+                "remote_link_psi_minus" => {
+                    apply_n_qubit_seq(state, &m4(gates::psi_minus()), qubits, n);
+                }
+                "remote_link_psi_plus" => {
+                    apply_n_qubit_seq(state, &m4(gates::psi_plus()), qubits, n);
+                }
+                "nonlocal_cz" | "remote_cz" => {
+                    apply_n_qubit_seq(state, &m4(gates::cz()), qubits, n);
+                }
+                "remote_cx" => {
+                    apply_n_qubit_seq(state, &m4(gates::cnot()), qubits, n);
+                }
+                "remote_epr" => {
+                    apply_n_qubit_seq(state, &m4(gates::phi_plus()), qubits, n);
+                }
+                "remote_barrier" | "remote_cu1" => {
+                    // no-op
+                }
+                other if other.starts_with("circuit-") => {
+                    // opaque Qiskit subcircuit — no-op
+                }
+                other => {
+                    return Err(format!("Unsupported generic gate: {other:?}. Decompose it before simulating."));
+                }
+            }
+        }
+
+        // -- Measurement -------------------------------------------------
+        Instruction::Measure { qubit, cbit } => {
+            let outcome = measure_qubit_seq(state, *qubit, n, rng);
+            cbits.insert(*cbit, outcome as i32);
+        }
+
+        // -- Classical control -------------------------------------------
+        Instruction::Conditional { condition, op } => {
+            let mut actual: u64 = 0;
+            for bit in 0..condition.creg_size {
+                let val = *cbits.get(&(condition.creg_base + bit)).unwrap_or(&0) as u64;
+                actual |= val << bit;
+            }
+            if actual == condition.creg_value {
+                run_instruction_par(state, op, n, cbits, rng)?;
+            }
+        }
+
+        // -- Reset -------------------------------------------------------
+        Instruction::Reset { qubit } => {
+            let outcome = measure_qubit_seq(state, *qubit, n, rng);
+            if outcome == 1 {
+                apply_one_qubit_seq(state, &gates::X, *qubit, n, &[]);
+            }
+        }
+
+        // -- No-ops ------------------------------------------------------
+        Instruction::Barrier | Instruction::Classical { .. } => {}
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Fused instruction dispatcher (used in parallel shot loops)
+// ---------------------------------------------------------------------------
+
+fn run_fused_par(
+    state: &mut Vec<C>,
+    fi: &FusedInstruction<'_>,
+    n: usize,
+    cbits: &mut HashMap<usize, i32>,
+    rng: &mut impl Rng,
+) -> Result<(), String> {
+    match fi {
+        FusedInstruction::Fused1Q { qubit, matrix } => {
+            apply_one_qubit_seq(state, matrix, *qubit, n, &[]);
+            Ok(())
+        }
+        FusedInstruction::Original(inst) => run_instruction_par(state, inst, n, cbits, rng),
+    }
 }
 
 // ---------------------------------------------------------------------------

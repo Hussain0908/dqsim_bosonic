@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use serde::Deserialize;
+use num_complex::Complex64;
+
+type C = Complex64;
 
 #[derive(Deserialize, Clone)]
 pub struct Register {
@@ -128,6 +131,216 @@ pub enum Instruction {
     // -----------------------------------------------------------------------
     Barrier,
     Classical  { name: String },
+}
+
+// ---------------------------------------------------------------------------
+// Gate fusion
+// ---------------------------------------------------------------------------
+
+/// A fused instruction: either an original instruction (by reference) or a
+/// pre-computed single-qubit matrix resulting from fusing consecutive gates.
+pub enum FusedInstruction<'a> {
+    Original(&'a Instruction),
+    Fused1Q { qubit: usize, matrix: [[C; 2]; 2] },
+}
+
+#[inline]
+fn matmul2x2(a: [[C; 2]; 2], b: [[C; 2]; 2]) -> [[C; 2]; 2] {
+    [
+        [
+            a[0][0] * b[0][0] + a[0][1] * b[1][0],
+            a[0][0] * b[0][1] + a[0][1] * b[1][1],
+        ],
+        [
+            a[1][0] * b[0][0] + a[1][1] * b[1][0],
+            a[1][0] * b[0][1] + a[1][1] * b[1][1],
+        ],
+    ]
+}
+
+/// Extract the 2×2 matrix and target qubit for a fuseable single-qubit gate.
+/// Returns None if the instruction is not a plain (no controls) single-qubit gate.
+fn gate_matrix_1q(inst: &Instruction) -> Option<(usize, [[C; 2]; 2])> {
+    use std::f64::consts::{FRAC_1_SQRT_2, PI};
+    #[inline] fn c(re: f64, im: f64) -> C { C::new(re, im) }
+    #[inline] fn r(re: f64) -> C { C::new(re, 0.0) }
+
+    let identity = [[r(1.0), r(0.0)], [r(0.0), r(1.0)]];
+
+    match inst {
+        Instruction::Id { qubit } | Instruction::U0 { qubit } =>
+            Some((*qubit, identity)),
+
+        Instruction::X { qubit } =>
+            Some((*qubit, [[r(0.0), r(1.0)], [r(1.0), r(0.0)]])),
+        Instruction::Y { qubit } =>
+            Some((*qubit, [[r(0.0), c(0.0, -1.0)], [c(0.0, 1.0), r(0.0)]])),
+        Instruction::Z { qubit } =>
+            Some((*qubit, [[r(1.0), r(0.0)], [r(0.0), r(-1.0)]])),
+        Instruction::H { qubit } => {
+            let s = FRAC_1_SQRT_2;
+            Some((*qubit, [[r(s), r(s)], [r(s), r(-s)]]))
+        }
+        Instruction::S { qubit } =>
+            Some((*qubit, [[r(1.0), r(0.0)], [r(0.0), c(0.0, 1.0)]])),
+        Instruction::Sdg { qubit } =>
+            Some((*qubit, [[r(1.0), r(0.0)], [r(0.0), c(0.0, -1.0)]])),
+        Instruction::T { qubit } => {
+            let s = FRAC_1_SQRT_2;
+            Some((*qubit, [[r(1.0), r(0.0)], [r(0.0), c(s, s)]]))
+        }
+        Instruction::Tdg { qubit } => {
+            let s = FRAC_1_SQRT_2;
+            Some((*qubit, [[r(1.0), r(0.0)], [r(0.0), c(s, -s)]]))
+        }
+        Instruction::Sx { qubit } =>
+            Some((*qubit, [[c(0.5, 0.5), c(0.5, -0.5)], [c(0.5, -0.5), c(0.5, 0.5)]])),
+        Instruction::Sxdg { qubit } =>
+            Some((*qubit, [[c(0.5, -0.5), c(0.5, 0.5)], [c(0.5, 0.5), c(0.5, -0.5)]])),
+
+        Instruction::U3 { qubit, theta, phi, lam } | Instruction::U { qubit, theta, phi, lam } => {
+            let (ct, st) = ((theta / 2.0).cos(), (theta / 2.0).sin());
+            Some((*qubit, [
+                [r(ct), -(c(lam.cos(), lam.sin()) * r(st))],
+                [c(phi.cos(), phi.sin()) * r(st), c((phi + lam).cos(), (phi + lam).sin()) * r(ct)],
+            ]))
+        }
+        Instruction::U2 { qubit, phi, lam } => {
+            let theta = PI / 2.0;
+            let (ct, st) = ((theta / 2.0).cos(), (theta / 2.0).sin());
+            Some((*qubit, [
+                [r(ct), -(c(lam.cos(), lam.sin()) * r(st))],
+                [c(phi.cos(), phi.sin()) * r(st), c((phi + lam).cos(), (phi + lam).sin()) * r(ct)],
+            ]))
+        }
+        Instruction::U1 { qubit, lam } | Instruction::P { qubit, lam } =>
+            Some((*qubit, [[r(1.0), r(0.0)], [r(0.0), c(lam.cos(), lam.sin())]])),
+        Instruction::Rx { qubit, theta } => {
+            let (cv, sv) = ((theta / 2.0).cos(), (theta / 2.0).sin());
+            Some((*qubit, [[r(cv), c(0.0, -sv)], [c(0.0, -sv), r(cv)]]))
+        }
+        Instruction::Ry { qubit, theta } => {
+            let (cv, sv) = ((theta / 2.0).cos(), (theta / 2.0).sin());
+            Some((*qubit, [[r(cv), r(-sv)], [r(sv), r(cv)]]))
+        }
+        Instruction::Rz { qubit, phi } => {
+            Some((*qubit, [
+                [c((-phi / 2.0).cos(), (-phi / 2.0).sin()), r(0.0)],
+                [r(0.0), c((phi / 2.0).cos(), (phi / 2.0).sin())],
+            ]))
+        }
+
+        // All multi-qubit and non-unitary instructions cannot be fused
+        _ => None,
+    }
+}
+
+fn is_identity_2x2(m: &[[C; 2]; 2]) -> bool {
+    (m[0][0] - C::new(1.0, 0.0)).norm() < 1e-10
+        && m[0][1].norm() < 1e-10
+        && m[1][0].norm() < 1e-10
+        && (m[1][1] - C::new(1.0, 0.0)).norm() < 1e-10
+}
+
+/// Fuse consecutive single-qubit gates on the same qubit into a single matrix.
+/// Returns a Vec of FusedInstruction that covers the same logical circuit.
+pub fn fuse_circuit<'a>(instructions: &'a [Instruction]) -> Vec<FusedInstruction<'a>> {
+    // pending[qubit] = (accumulated_matrix, first_original_index_unused)
+    let mut pending: HashMap<usize, [[C; 2]; 2]> = HashMap::new();
+    let mut out: Vec<FusedInstruction<'a>> = Vec::with_capacity(instructions.len());
+
+    let identity: [[C; 2]; 2] = [
+        [C::new(1.0, 0.0), C::new(0.0, 0.0)],
+        [C::new(0.0, 0.0), C::new(1.0, 0.0)],
+    ];
+
+    // Flush accumulated matrix for a qubit into `out`.
+    let flush_qubit = |q: usize,
+                       pending: &mut HashMap<usize, [[C; 2]; 2]>,
+                       out: &mut Vec<FusedInstruction<'a>>| {
+        if let Some(m) = pending.remove(&q) {
+            if !is_identity_2x2(&m) {
+                out.push(FusedInstruction::Fused1Q { qubit: q, matrix: m });
+            }
+        }
+    };
+
+    for inst in instructions {
+        if let Some((qubit, mat)) = gate_matrix_1q(inst) {
+            // Accumulate: new_mat = mat * pending  (mat applied after pending)
+            let acc = pending.entry(qubit).or_insert(identity);
+            *acc = matmul2x2(mat, *acc);
+        } else {
+            // Non-fuseable instruction: flush all qubits it touches, then emit it.
+            let touched = inst.qubits();
+            for q in &touched {
+                flush_qubit(*q, &mut pending, &mut out);
+            }
+            // Special case: Conditional / Reset also touch their inner qubit already
+            // via inst.qubits(), so no extra handling needed.
+            out.push(FusedInstruction::Original(inst));
+        }
+    }
+
+    // Flush any remaining pending gates.
+    let remaining_qubits: Vec<usize> = pending.keys().copied().collect();
+    for q in remaining_qubits {
+        flush_qubit(q, &mut pending, &mut out);
+    }
+
+    out
+}
+
+/// Owned fused entry for the composite simulator shot loop.
+/// Unlike FusedInstruction<'a>, this is 'static and Send.
+pub enum FusedCompositeEntry {
+    /// Reference back into node_circuits by (node, local_idx).
+    Original { node: usize, local_idx: usize },
+    /// Pre-computed single-qubit matrix (no circuit reference needed).
+    Fused1Q { qubit: usize, matrix: [[C; 2]; 2] },
+}
+
+/// Fuse consecutive single-qubit gates in the globally-sorted composite entry stream.
+/// `entries` is `&[(order, node, local_idx)]` already sorted by order.
+pub fn fuse_composite_entries(
+    entries: &[(i64, usize, usize)],
+    node_circuits: &HashMap<usize, Circuit>,
+) -> Vec<FusedCompositeEntry> {
+    let mut pending: HashMap<usize, [[C; 2]; 2]> = HashMap::new();
+    let mut out: Vec<FusedCompositeEntry> = Vec::with_capacity(entries.len());
+
+    let identity: [[C; 2]; 2] = [
+        [C::new(1.0, 0.0), C::new(0.0, 0.0)],
+        [C::new(0.0, 0.0), C::new(1.0, 0.0)],
+    ];
+
+    let mut flush_qubit = |q: usize, pending: &mut HashMap<usize, [[C; 2]; 2]>, out: &mut Vec<FusedCompositeEntry>| {
+        if let Some(m) = pending.remove(&q) {
+            if !is_identity_2x2(&m) {
+                out.push(FusedCompositeEntry::Fused1Q { qubit: q, matrix: m });
+            }
+        }
+    };
+
+    for &(_, node, local_idx) in entries {
+        let inst = &node_circuits[&node].instructions[local_idx];
+        if let Some((qubit, mat)) = gate_matrix_1q(inst) {
+            let acc = pending.entry(qubit).or_insert(identity);
+            *acc = matmul2x2(mat, *acc);
+        } else {
+            let touched = inst.qubits();
+            for q in &touched {
+                flush_qubit(*q, &mut pending, &mut out);
+            }
+            out.push(FusedCompositeEntry::Original { node, local_idx });
+        }
+    }
+
+    let remaining: Vec<usize> = pending.keys().copied().collect();
+    for q in remaining {
+        flush_qubit(q, &mut pending, &mut out);
+    }
+    out
 }
 
 impl Instruction {
