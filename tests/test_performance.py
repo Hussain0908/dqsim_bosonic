@@ -30,7 +30,7 @@ import qasmpi
 from bosonic_model.qasm import QasmError, Translator
 from bosonic_converters import CircuitConverters
 from bosonic_sdk.distributor.distributors.disqco_distributor import DisqcoDistributor
-from qiskit_aer import AerSimulator as _AerSimulator
+from bosonic_sdk.simulation.simulator import Simulator as BosonicSimulator
 
 from dqsim import CompositeSimulator, StatevectorSimulator
 
@@ -95,6 +95,7 @@ def _n_qubits(circuit) -> int:
     return max(r.base + r.size for r in circuit.qregs.values())
 
 
+
 # ---------------------------------------------------------------------------
 # Benchmark runners
 # ---------------------------------------------------------------------------
@@ -140,29 +141,25 @@ def _bench_dqsim_comp_shots(distributed) -> float:
 
 
 def _bench_aer_sv_run(circuit) -> float:
-    """Median time (ms) for AerSimulator(statevector).run(qc_no_meas, shots=1)."""
-    no_meas = _strip_measurements(circuit)
-    qc = CircuitConverters.to_qiskit(no_meas)
-    aer = _AerSimulator(method="statevector")
-
-    def run():
-        aer.run(qc, shots=1).result()
-
-    return _median_ms(run)
+    """Median time (ms) for Aer statevector run — preprocessing and backend init excluded."""
+    qc = CircuitConverters.to_qiskit(circuit)
+    if qc.num_clbits == 0:
+        qc.measure_all()
+    sim = BosonicSimulator()
+    qc = sim.prepare(qc)
+    backend = sim.build_backend("statevector")
+    return _median_ms(lambda: sim.simulate(qc, backend, shots=1))
 
 
 def _bench_aer_shots(circuit) -> float:
-    """Median time (ms) for AerSimulator.run(qc_with_meas, shots=SHOTS)."""
+    """Median time (ms) for Aer statevector shots — preprocessing and backend init excluded."""
     qc = CircuitConverters.to_qiskit(circuit)
-    # Ensure there are measurements; add them if missing.
     if qc.num_clbits == 0:
         qc.measure_all()
-    aer = _AerSimulator()
-
-    def run():
-        aer.run(qc, shots=SHOTS, seed_simulator=SEED).result()
-
-    return _median_ms(run)
+    sim = BosonicSimulator()
+    qc = sim.prepare(qc)
+    backend = sim.build_backend("statevector")
+    return _median_ms(lambda: sim.simulate(qc, backend, shots=SHOTS))
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +237,8 @@ class TestPerformance:
             circuit_no_meas = _strip_measurements(raw_circuit)
             n = _n_qubits(circuit_no_meas)
             dist = DisqcoDistributor()
-            
+
+            distributed_symbolic = dist.distribute(circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=False)            
             distributed_lowered = dist.distribute(circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=True)
             print(f"qubits_per_node: { {n: len(qs) for n, qs in distributed_lowered.qubits_per_node.items()} }", flush=True)
             remote_count = sum(
@@ -250,11 +248,6 @@ class TestPerformance:
             )
             print(f"remote gates: {remote_count}", flush=True)
 
-            try:
-                distributed_raw = dist.distribute(circuit_no_meas, nodes=nodes, qubits_per_node=qpn, lowered=False)
-            except ValueError as exc:
-                print(f"         lowered=False unavailable: {exc}", flush=True)
-                distributed_raw = None
 
             print(f"         dqsim-sv run ...", end="", flush=True)
             sv_run = _bench_dqsim_sv_run(circuit_no_meas)
@@ -264,34 +257,28 @@ class TestPerformance:
             comp_run = _bench_dqsim_comp_run(distributed_lowered)
             print(f" {comp_run:.2f} ms", flush=True)
 
-            if distributed_raw is not None:
-                print(f"         dqsim-comp run (lowered=False) ...", end="", flush=True)
-                raw_run = _bench_dqsim_comp_run(distributed_raw)
-                print(f" {raw_run:.2f} ms", flush=True)
-            else:
-                raw_run = None
+            print(f"         dqsim-comp run (lowered=False) ...", end="", flush=True)
+            raw_run = _bench_dqsim_comp_run(distributed_symbolic)
+            print(f" {raw_run:.2f} ms", flush=True)
 
-            print(f"         aer-sv run ...", end="", flush=True)
-            aer_run = _bench_aer_sv_run(circuit_no_meas)
+            print(f"         bosonic (aer) sv run ...", end="", flush=True)
+            aer_run = _bench_aer_sv_run(distributed_lowered.as_monolithic_circuit())
             print(f" {aer_run:.2f} ms", flush=True)
 
-            print(f"         dqsim-sv {SHOTS} shots ...", end="", flush=True)
-            sv_shot_total = _bench_dqsim_sv_shots(circuit_no_meas)
+            print(f"         dqsim-sv {SHOTS} shots (monolithic) ...", end="", flush=True)
+            sv_shot_total = _bench_dqsim_sv_shots(distributed_lowered.as_monolithic_circuit())
             print(f" {sv_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
             print(f"         dqsim-comp {SHOTS} shots (lowered=True) ...", end="", flush=True)
             comp_shot_total = _bench_dqsim_comp_shots(distributed_lowered)
             print(f" {comp_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
-            if distributed_raw is not None:
-                print(f"         dqsim-comp {SHOTS} shots (lowered=False) ...", end="", flush=True)
-                raw_shot_total = _bench_dqsim_comp_shots(distributed_raw)
-                print(f" {raw_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
-            else:
-                raw_shot_total = None
+            print(f"         dqsim-comp {SHOTS} shots (lowered=False) ...", end="", flush=True)
+            raw_shot_total = _bench_dqsim_comp_shots(distributed_symbolic)
+            print(f" {raw_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
-            print(f"         aer {SHOTS} shots ...", end="", flush=True)
-            aer_shot_total = _bench_aer_shots(circuit_no_meas)
+            print(f"         bosonic (aer) {SHOTS} shots ...", end="", flush=True)
+            aer_shot_total = _bench_aer_shots(distributed_lowered.as_monolithic_circuit())
             print(f" {aer_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
             rows.append((name, n, sv_run, comp_run, raw_run, aer_run, sv_shot_total, comp_shot_total, raw_shot_total, aer_shot_total))

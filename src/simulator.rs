@@ -447,8 +447,17 @@ fn run_instruction(
                 "remote_link_psi_plus" => {
                     do_nq(state, &m4(gates::psi_plus()), qubits, n, acc);
                 }
-                "nonlocal_cz" => {
-                    do_nq(state, &m4(gates::NONLOCAL_CZ), qubits, n, acc);
+                "nonlocal_cz" | "remote_cz" => {
+                    do_nq(state, &m4(gates::cz()), qubits, n, acc);
+                }
+                "remote_cx" => {
+                    do_nq(state, &m4(gates::cnot()), qubits, n, acc);
+                }
+                "remote_epr" => {
+                    do_nq(state, &m4(gates::phi_plus()), qubits, n, acc);
+                }
+                "remote_barrier" | "remote_cu1" => {
+                    // no-op
                 }
                 other => {
                     return Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
