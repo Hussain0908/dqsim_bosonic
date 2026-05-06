@@ -38,7 +38,7 @@ from dqsim import PBlockSimulator, StatevectorSimulator
 # ---------------------------------------------------------------------------
 
 SEED = 42
-SHOTS = 1000
+SHOTS = 100 # usually higher for good values - i'm keeping it small for quick local iterations
 
 # (qasmpi_name, nodes, qubits_per_node)
 # nodes × qubits_per_node must be >= circuit qubit count.

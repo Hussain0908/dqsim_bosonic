@@ -25,7 +25,7 @@ from bosonic_model.instructions import (
 )
 from bosonic_sdk.distributor.distributors.bosonic_distributor import BosonicDistributor
 
-from dqsim import PBlockSimulator, StatevectorSimulator
+from dqsim import StatevectorSimulator, simulate_distributed
 
 SEED = 42
 
@@ -76,7 +76,7 @@ def _assert_marginals_match(original: dict[int, float], distributed: dict[int, f
 
 def _pblock_simulate(circuit: Circuit, *, nodes: int, qubits_per_node: int) -> dict[int, float]:
     distributed = BosonicDistributor().distribute(circuit, nodes=nodes, qubits_per_node=qubits_per_node)
-    result = PBlockSimulator(seed=SEED).simulate(distributed)
+    result = simulate_distributed(distributed, seed=SEED)
     probs = result.probabilities()
     data_indices = result.physical_qubits[::2]  # even physical qubits are data
     return _marginalise(probs, data_indices)

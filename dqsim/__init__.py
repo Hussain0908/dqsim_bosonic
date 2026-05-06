@@ -4,6 +4,10 @@ from dqsim._core import (
     SimulationProfile,
     SimulationResult,
     StatevectorSimulator,
+    simulate_distributed,
+    simulate_distributed_shots,
+    simulate_monolithic,
+    simulate_monolithic_shots,
 )
 
 __all__ = [
@@ -12,4 +16,8 @@ __all__ = [
     "SimulationProfile",
     "PBlockSimulator",
     "PBlockResult",
+    "simulate_monolithic",
+    "simulate_distributed",
+    "simulate_monolithic_shots",
+    "simulate_distributed_shots",
 ]

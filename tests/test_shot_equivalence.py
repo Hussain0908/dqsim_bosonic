@@ -18,7 +18,7 @@ import qasmpi
 from bosonic_model.qasm.translator import Translator
 from bosonic_sdk.distributor.distributors.bosonic_distributor import BosonicDistributor
 
-from dqsim import PBlockSimulator, StatevectorSimulator
+from dqsim import simulate_distributed, simulate_monolithic
 
 SEED = 42
 SHOTS = 2000
@@ -55,14 +55,14 @@ def _marginalise(probs: dict[int, float], data_indices: list[int]) -> dict[int, 
 
 def _monolithic_probs(circuit) -> dict[int, float]:
     """Estimate probability distribution from SHOTS samples of the monolithic SV."""
-    counts = StatevectorSimulator(seed=SEED).simulate(circuit).counts(shots=SHOTS, seed=SEED)
+    counts = simulate_monolithic(circuit, seed=SEED).counts(shots=SHOTS, seed=SEED)
     return {int(bits, 2): n / SHOTS for bits, n in counts.items()}
 
 
 def _pblock_probs(circuit, *, nodes: int, qubits_per_node: int) -> dict[int, float]:
     """Estimate probability distribution by sampling the pblock simulator output."""
     distributed = BosonicDistributor().distribute(circuit, nodes=nodes, qubits_per_node=qubits_per_node)
-    result = PBlockSimulator(seed=SEED).simulate(distributed)
+    result = simulate_distributed(distributed, seed=SEED)
     marginal = _marginalise(result.probabilities(), result.physical_qubits[::2])
 
     rng = np.random.default_rng(SEED)
