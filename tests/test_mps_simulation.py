@@ -8,6 +8,7 @@ from bosonic_model import Circuit, Register
 from bosonic_model.qasm import Translator
 from bosonic_model.instructions import (
     Condition,
+    CzInstruction,
     ConditionalInstruction,
     CxInstruction,
     HInstruction,
@@ -86,6 +87,23 @@ class TestMpsSimulation:
             _circuit(3, [
                 XInstruction(qubit=1, qubits=[1]),
                 SwapInstruction(a=1, b=2, qubits=[1, 2], params=[]),
+            ])
+        )
+
+    def test_repeated_swap_with_reversed_two_qubit_order(self) -> None:
+        _assert_mps_matches_statevector(
+            _circuit(2, [
+                RyInstruction(
+                    qubit=0,
+                    qubits=[0],
+                    theta=-2.870660678718984,
+                    params=[-2.870660678718984],
+                ),
+                SwapInstruction(a=1, b=0, qubits=[1, 0], params=[]),
+                HInstruction(qubit=0, qubits=[0]),
+                SwapInstruction(a=0, b=1, qubits=[0, 1], params=[]),
+                CzInstruction(control=1, target=0, qubits=[1, 0], params=[]),
+                SwapInstruction(a=0, b=1, qubits=[0, 1], params=[]),
             ])
         )
 

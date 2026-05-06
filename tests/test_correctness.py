@@ -2,13 +2,14 @@
 Correctness tests: dqsim statevector and pblock vs Qiskit Aer statevector.
 
 For each QASMBench circuit, distributes using DisqcoDistributor (lowered=True),
-then simulates with SHOTS shots via three independent paths:
+then simulates with SHOTS shots via four independent paths:
 
   1. dqsim statevector   — simulate_monolithic_shots on dist_circuit_as_mono
-  2. dqsim pblock        — simulate_distributed_shots on the DistributedCircuit
-  3. Qiskit Aer SV       — AerSimulator(statevector) on dist_circuit_as_mono
+  2. dqsim MPS           — simulate_monolithic_shots(mode="mps") on dist_circuit_as_mono
+  3. dqsim pblock        — simulate_distributed_shots on the DistributedCircuit
+  4. Qiskit Aer SV       — AerSimulator(statevector) on dist_circuit_as_mono
 
-All three paths operate on the same distributed circuit representation so qubit
+All four paths operate on the same distributed circuit representation so qubit
 ordering is consistent. Data-qubit marginals (Q-prefixed registers) are compared
 within statistical tolerance.
 """
@@ -104,6 +105,17 @@ def _sv_marginals(dist_circuit_as_mono, data_cbit_indices: list[int]) -> dict[in
     return _marginalise(full, data_cbit_indices)
 
 
+def _mps_marginals(dist_circuit_as_mono, data_cbit_indices: list[int]) -> dict[int, float]:
+    counts = simulate_monolithic_shots(
+        dist_circuit_as_mono,
+        mode="mps",
+        shots=SHOTS,
+        seed=SEED,
+    )
+    full = {int(bs, 2): n / SHOTS for bs, n in counts.items()}
+    return _marginalise(full, data_cbit_indices)
+
+
 def _pblock_marginals(dist, data_cbit_indices: list[int]) -> dict[int, float]:
     counts = simulate_distributed_shots(dist, shots=SHOTS, seed=SEED)
     full = {int(bs, 2): n / SHOTS for bs, n in counts.items()}
@@ -159,7 +171,7 @@ def _assert_close(
 # ---------------------------------------------------------------------------
 
 class TestCorrectness:
-    """Each circuit is distributed once; sv, pblock, and Aer are compared in one shot."""
+    """Each circuit is distributed once; sv, MPS, pblock, and Aer are compared."""
 
     @pytest.mark.parametrize(
         "name,nodes,qpn", _BENCH_CIRCUITS, ids=[t[0] for t in _BENCH_CIRCUITS]
@@ -187,8 +199,10 @@ class TestCorrectness:
         data_cbit_indices = _data_cbit_indices(mono, set(data_indices))
 
         sv = _sv_marginals(mono, data_cbit_indices)
+        mps = _mps_marginals(mono, data_cbit_indices)
         pblock = _pblock_marginals(dist, data_cbit_indices)
         aer = _aer_marginals(mono, data_cbit_indices)
 
         _assert_close(sv, aer, "dqsim-sv", "aer")
+        _assert_close(mps, aer, "dqsim-mps", "aer")
         _assert_close(pblock, aer, "dqsim-pblock", "aer")
