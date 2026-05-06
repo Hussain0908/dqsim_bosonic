@@ -1,4 +1,4 @@
-.PHONY: build publish
+.PHONY: build publish test perf
 
 DIST_DIR := dist
 REPOSITORY ?= testpypi
@@ -10,6 +10,13 @@ PUBLISH_URL := https://upload.pypi.org/legacy/
 else
 $(error Unsupported REPOSITORY '$(REPOSITORY)'; use REPOSITORY=testpypi or REPOSITORY=pypi)
 endif
+
+test:
+	uv run --python 3.11 --extra test pytest tests/ -v -s
+
+perf:
+	uv run --python 3.11 maturin develop --release
+	uv run --python 3.11 --extra test pytest examples/test_performance.py -v -s
 
 build:
 	rm -rf $(DIST_DIR)

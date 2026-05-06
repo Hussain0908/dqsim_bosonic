@@ -5,7 +5,7 @@ use rayon::prelude::*;
 type C = Complex64;
 
 /// Parallelize when the statevector has at least 2^PAR_THRESHOLD amplitudes.
-const PAR_THRESHOLD: usize = 16;
+const PAR_THRESHOLD: usize = 12;
 
 /// Maximum gate arity (C4x = 5 qubits → dim = 32).
 const MAX_DIM: usize = 32;
@@ -255,6 +255,111 @@ pub fn measure_qubit<R: Rng>(state: &mut Vec<C>, qubit: usize, n: usize, rng: &m
         }
     }
 
+    outcome
+}
+
+// ---------------------------------------------------------------------------
+// Sequential variants — always single-threaded, for use inside parallel shot loops
+// to avoid nested Rayon thread pool contention.
+// ---------------------------------------------------------------------------
+
+/// Sequential apply_one_qubit — always single-threaded, for use inside parallel shot loops.
+pub fn apply_one_qubit_seq(
+    state: &mut Vec<C>,
+    u: &[[C; 2]; 2],
+    target: usize,
+    n: usize,
+    controls: &[(usize, bool)],
+) {
+    let inclusion_mask: usize = controls.iter().fold(0, |m, &(w, _)| m | (1 << w));
+    let desired_mask: usize =
+        controls.iter().fold(0, |m, &(w, flag)| if flag { m | (1 << w) } else { m });
+    let half = 1 << target;
+    let dim = 1 << n;
+    let u00 = u[0][0];
+    let u01 = u[0][1];
+    let u10 = u[1][0];
+    let u11 = u[1][1];
+    let mut i = 0;
+    while i < dim {
+        if (i & half) == 0 {
+            if inclusion_mask == 0 || (i & inclusion_mask) == desired_mask {
+                let j = i | half;
+                let a = state[i];
+                let b = state[j];
+                state[i] = u00 * a + u01 * b;
+                state[j] = u10 * a + u11 * b;
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Sequential apply_n_qubit — always single-threaded.
+pub fn apply_n_qubit_seq(state: &mut Vec<C>, u: &[Vec<C>], qubits: &[usize], n: usize) {
+    let k = qubits.len();
+    let dim = 1 << k;
+    let n_states = 1 << n;
+    let mask: usize = qubits.iter().fold(0, |m, &q| m | (1 << q));
+    let mut offsets = [0usize; MAX_DIM];
+    for j in 0..dim {
+        let mut offset = 0usize;
+        for (bit, &q) in qubits.iter().enumerate() {
+            if (j >> (k - 1 - bit)) & 1 == 1 {
+                offset |= 1 << q;
+            }
+        }
+        offsets[j] = offset;
+    }
+    let mut v = vec![C::new(0.0, 0.0); dim];
+    let mut w = vec![C::new(0.0, 0.0); dim];
+    let mut idx = vec![0usize; dim];
+    for base in (0..n_states).filter(|&i| (i & mask) == 0) {
+        for j in 0..dim {
+            idx[j] = base + offsets[j];
+        }
+        for j in 0..dim {
+            v[j] = state[idx[j]];
+        }
+        for row in 0..dim {
+            let mut acc = C::new(0.0, 0.0);
+            for col in 0..dim {
+                acc += u[row][col] * v[col];
+            }
+            w[row] = acc;
+        }
+        for j in 0..dim {
+            state[idx[j]] = w[j];
+        }
+    }
+}
+
+/// Sequential measure_qubit — always single-threaded.
+pub fn measure_qubit_seq<R: Rng>(state: &mut Vec<C>, qubit: usize, n: usize, rng: &mut R) -> u8 {
+    let n_states = 1 << n;
+    let bit = 1 << qubit;
+    let p1: f64 = (0..n_states)
+        .filter(|&i| (i & bit) != 0)
+        .map(|i| state[i].norm_sqr())
+        .sum();
+    let outcome = if rng.gen::<f64>() < p1 { 1u8 } else { 0u8 };
+    if outcome == 1 {
+        let norm = p1.sqrt().max(1e-15);
+        for i in (0..n_states).filter(|&i| (i & bit) == 0) {
+            state[i] = C::new(0.0, 0.0);
+        }
+        for i in (0..n_states).filter(|&i| (i & bit) != 0) {
+            state[i] /= norm;
+        }
+    } else {
+        let norm = (1.0 - p1).max(0.0).sqrt().max(1e-15);
+        for i in (0..n_states).filter(|&i| (i & bit) != 0) {
+            state[i] = C::new(0.0, 0.0);
+        }
+        for i in (0..n_states).filter(|&i| (i & bit) == 0) {
+            state[i] /= norm;
+        }
+    }
     outcome
 }
 
