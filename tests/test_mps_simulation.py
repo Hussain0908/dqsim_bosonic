@@ -7,14 +7,19 @@ import qasmpi
 from bosonic_model import Circuit, Register
 from bosonic_model.qasm import Translator
 from bosonic_model.instructions import (
+    Condition,
+    ConditionalInstruction,
     CxInstruction,
     HInstruction,
+    MeasureInstruction,
     RxInstruction,
     RyInstruction,
     RzInstruction,
+    ResetInstruction,
     SwapInstruction,
     XInstruction,
 )
+from bosonic_sdk.distributor.distributors.disqco_distributor import DisqcoDistributor
 
 from dqsim import simulate_monolithic
 
@@ -94,6 +99,44 @@ class TestMpsSimulation:
 
         with pytest.raises(NotImplementedError, match="one- and two-qubit"):
             simulate_monolithic(circuit, mode="mps", seed=SEED)
+
+    def test_mid_circuit_measurement_and_conditional(self) -> None:
+        circuit = Circuit(
+            qregs={"q": Register(name="q", size=2, base=0)},
+            cregs={"c": Register(name="c", size=1, base=0)},
+            instructions=[
+                XInstruction(qubit=0, qubits=[0]),
+                MeasureInstruction(qubit=0, cbit=0, qubits=[0]),
+                ConditionalInstruction(
+                    condition=Condition(creg_base=0, creg_size=1, creg_value=1),
+                    op=XInstruction(qubit=1, qubits=[1]),
+                    qubits=[1],
+                ),
+            ],
+        )
+        result = simulate_monolithic(circuit, mode="mps", seed=SEED)
+        assert result.classical_bits == {0: 1}
+        assert result.probabilities() == {3: 1.0}
+
+    def test_reset(self) -> None:
+        circuit = _circuit(1, [
+            XInstruction(qubit=0, qubits=[0]),
+            ResetInstruction(qubit=0, qubits=[0]),
+        ])
+        result = simulate_monolithic(circuit, mode="mps", seed=SEED)
+        assert result.probabilities() == {0: 1.0}
+
+    def test_lowered_distributed_circuit_runs_as_monolithic(self) -> None:
+        circuit = _from_qasmpi("deutsch_n2")
+        distributed = DisqcoDistributor().distribute(
+            circuit,
+            nodes=2,
+            qubits_per_node=1,
+            lowered=True,
+        )
+        monolithic = distributed.as_monolithic_circuit()
+        result = simulate_monolithic(monolithic, mode="mps", seed=SEED)
+        assert abs(sum(result.probabilities().values()) - 1.0) < TOL
 
     @pytest.mark.parametrize("name", ["deutsch_n2", "bell_n4", "qft_n4", "qaoa_n6"])
     def test_qasmpi_circuit_matches_statevector(self, name: str) -> None:

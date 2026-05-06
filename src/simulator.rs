@@ -90,8 +90,7 @@ pub fn simulate_monolithic_shots(
         }
         MonolithicSimulationMode::Mps => {
             let sim = MpsSimulator::new(seed);
-            let result = sim.simulate(py, circuit)?;
-            Ok(result.sample_counts(py, shots, None, seed))
+            sim.simulate_shots(py, circuit, shots)
         }
     }
 }

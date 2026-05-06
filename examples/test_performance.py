@@ -7,13 +7,13 @@ Two timing axes are reported for each circuit:
 
   per-run (ms)
     dqsim-sv   : StatevectorSimulator.simulate()
-    dqsim-mps  : simulate_monolithic(..., mode="mps")
+    dqsim-mps  : simulate_monolithic(distributed.as_monolithic_circuit(), mode="mps")
     dqsim-pblock : HypergraphDistributor.distribute() + PBlockSimulator.simulate()
     aer-sv     : AerSimulator(statevector).run(qc, shots=1) on a measurement-free circuit
 
   per-shot (µs)
     dqsim-sv   : (simulate() + result.counts(SHOTS)) / SHOTS
-    dqsim-mps  : (MPS simulate + result.counts(SHOTS)) / SHOTS
+    dqsim-mps  : true MPS trajectories on distributed.as_monolithic_circuit()
     dqsim-pblock : (distribute() + simulate() + sample SHOTS) / SHOTS
     aer        : AerSimulator().run(qc_with_meas, shots=SHOTS) / SHOTS
 
@@ -33,7 +33,12 @@ from bosonic_sdk.distributor.distributors.hypergraph_distributor import Hypergra
 from bosonic_sdk.distributor.distributors.disqco_distributor import DisqcoDistributor
 from bosonic_sdk.simulation.simulator import Simulator as BosonicSimulator
 
-from dqsim import PBlockSimulator, StatevectorSimulator, simulate_monolithic
+from dqsim import (
+    PBlockSimulator,
+    StatevectorSimulator,
+    simulate_monolithic,
+    simulate_monolithic_shots,
+)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -143,9 +148,9 @@ def _bench_dqsim_mps_run(circuit) -> float:
 
 
 def _bench_dqsim_mps_shots(circuit) -> float:
-    """Time (ms) for MPS simulation plus dense-result sampling."""
+    """Time (ms) for true MPS shot trajectories."""
     return _elapsed_ms(
-        lambda: simulate_monolithic(circuit, mode="mps", seed=SEED).counts(shots=SHOTS, seed=SEED)
+        lambda: simulate_monolithic_shots(circuit, mode="mps", shots=SHOTS, seed=SEED)
     )
 
 
@@ -288,7 +293,7 @@ class TestPerformance:
 
             try:
                 print(f"         dqsim-mps run ...", end="", flush=True)
-                mps_run = _bench_dqsim_mps_run(circuit_no_meas)
+                mps_run = _bench_dqsim_mps_run(distributed_lowered.as_monolithic_circuit())
                 print(f" {mps_run:.2f} ms", flush=True)
             except NotImplementedError as exc:
                 print(f" unavailable: {exc}", flush=True)
@@ -316,7 +321,7 @@ class TestPerformance:
 
             if mps_run is not None:
                 print(f"         dqsim-mps {SHOTS} shots (monolithic) ...", end="", flush=True)
-                mps_shot_total = _bench_dqsim_mps_shots(circuit_no_meas)
+                mps_shot_total = _bench_dqsim_mps_shots(distributed_lowered.as_monolithic_circuit())
                 print(f" {mps_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
             else:
                 mps_shot_total = None

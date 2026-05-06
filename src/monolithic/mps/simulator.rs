@@ -3,10 +3,13 @@ use std::collections::HashMap;
 use nalgebra::DMatrix;
 use num_complex::Complex64;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 
 use crate::gates;
 use crate::monolithic::statevector::SimulationResult;
-use crate::types::{Circuit, Instruction};
+use crate::types::{Circuit, Instruction, format_cbits};
 
 type C = Complex64;
 
@@ -218,11 +221,43 @@ impl Mps {
         }
         state
     }
+
+    fn measure(&mut self, qubit: usize, rng: &mut impl Rng) -> usize {
+        let state = self.to_statevector();
+        let mut p1 = 0.0;
+        for (idx, amp) in state.iter().enumerate() {
+            if ((idx >> qubit) & 1) == 1 {
+                p1 += amp.norm_sqr();
+            }
+        }
+        let p1 = p1.clamp(0.0, 1.0);
+        let outcome = if rng.gen_bool(p1) { 1 } else { 0 };
+        let prob = if outcome == 1 { p1 } else { 1.0 - p1 };
+        self.project_qubit(qubit, outcome, prob);
+        outcome
+    }
+
+    fn project_qubit(&mut self, qubit: usize, outcome: usize, prob: f64) {
+        let scale = if prob > 0.0 { 1.0 / prob.sqrt() } else { 0.0 };
+        let tensor = &mut self.tensors[qubit];
+        for l in 0..tensor.left {
+            for s in 0..2 {
+                for r in 0..tensor.right {
+                    let value = if s == outcome {
+                        tensor.get(l, s, r) * C::new(scale, 0.0)
+                    } else {
+                        C::new(0.0, 0.0)
+                    };
+                    tensor.set(l, s, r, value);
+                }
+            }
+        }
+    }
 }
 
 #[pyclass]
 pub struct MpsSimulator {
-    _seed: Option<u64>,
+    seed: Option<u64>,
 }
 
 #[pymethods]
@@ -230,7 +265,7 @@ impl MpsSimulator {
     #[new]
     #[pyo3(signature = (seed=None))]
     pub fn new(seed: Option<u64>) -> Self {
-        Self { _seed: seed }
+        Self { seed }
     }
 
     pub fn simulate(&self, _py: Python, circuit: &Bound<PyAny>) -> PyResult<SimulationResult> {
@@ -240,19 +275,56 @@ impl MpsSimulator {
         })?;
 
         let mut mps = Mps::new(rust_circuit.num_qubits());
+        let mut cbits: HashMap<usize, i32> = HashMap::new();
+        let seed = self.seed.unwrap_or_else(|| rand::thread_rng().gen());
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for inst in &rust_circuit.instructions {
-            run_instruction(&mut mps, inst)?;
+            run_instruction(&mut mps, inst, &mut cbits, &mut rng)?;
         }
         Ok(SimulationResult::new(
             mps.to_statevector(),
             rust_circuit.num_qubits(),
-            HashMap::new(),
+            cbits,
             None,
         ))
     }
+
+    #[pyo3(signature = (circuit, shots=1000))]
+    pub fn simulate_shots(&self, py: Python, circuit: &Bound<PyAny>, shots: usize) -> PyResult<PyObject> {
+        let json_str: String = circuit.call_method0("model_dump_json")?.extract()?;
+        let rust_circuit: Circuit = serde_json::from_str(&json_str).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Circuit JSON parse error: {e}"))
+        })?;
+
+        let num_cbits = rust_circuit.num_cbits();
+        let base_seed = self.seed.unwrap_or_else(|| rand::thread_rng().gen());
+        let mut counts: HashMap<String, usize> = HashMap::new();
+
+        for shot in 0..shots {
+            let mut mps = Mps::new(rust_circuit.num_qubits());
+            let mut cbits: HashMap<usize, i32> = HashMap::new();
+            let mut rng = ChaCha8Rng::seed_from_u64(base_seed.wrapping_add(shot as u64));
+            for inst in &rust_circuit.instructions {
+                run_instruction(&mut mps, inst, &mut cbits, &mut rng)?;
+            }
+            let key = format_cbits(&cbits, num_cbits);
+            *counts.entry(key).or_insert(0) += 1;
+        }
+
+        let d = PyDict::new_bound(py);
+        for (k, v) in &counts {
+            d.set_item(k, v)?;
+        }
+        Ok(d.into())
+    }
 }
 
-fn run_instruction(mps: &mut Mps, inst: &Instruction) -> PyResult<()> {
+fn run_instruction(
+    mps: &mut Mps,
+    inst: &Instruction,
+    cbits: &mut HashMap<usize, i32>,
+    rng: &mut impl Rng,
+) -> PyResult<()> {
     match inst {
         Instruction::Id { .. } | Instruction::U0 { .. } | Instruction::Barrier | Instruction::Classical { .. } => {}
         Instruction::X { qubit } => mps.apply_1q(*qubit, &gates::X),
@@ -295,9 +367,54 @@ fn run_instruction(mps: &mut Mps, inst: &Instruction) -> PyResult<()> {
         }
         Instruction::Rxx { a, b, theta } => mps.apply_2q(*a, *b, &gates::rxx(*theta))?,
         Instruction::Rzz { a, b, theta } => mps.apply_2q(*a, *b, &gates::rzz(*theta))?,
+        Instruction::Gate { name, qubits, .. } => {
+            match name.to_lowercase().as_str() {
+                "remote_link_phi_plus" | "remote_epr" | "epr" => {
+                    mps.apply_2q(qubits[0], qubits[1], &gates::phi_plus())?;
+                }
+                "remote_link_psi_minus" => {
+                    mps.apply_2q(qubits[0], qubits[1], &gates::psi_minus())?;
+                }
+                "remote_link_psi_plus" => {
+                    mps.apply_2q(qubits[0], qubits[1], &gates::psi_plus())?;
+                }
+                "nonlocal_cz" | "remote_cz" => {
+                    mps.apply_2q(qubits[0], qubits[1], &gates::cz())?;
+                }
+                "remote_cx" => {
+                    mps.apply_2q(qubits[0], qubits[1], &gates::cnot())?;
+                }
+                "remote_barrier" | "remote_cu1" => {}
+                other => {
+                    return Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
+                        "MPS simulator does not support generic gate {other:?}"
+                    )));
+                }
+            }
+        }
+        Instruction::Measure { qubit, cbit } => {
+            let outcome = mps.measure(*qubit, rng);
+            cbits.insert(*cbit, outcome as i32);
+        }
+        Instruction::Reset { qubit } => {
+            let outcome = mps.measure(*qubit, rng);
+            if outcome == 1 {
+                mps.apply_1q(*qubit, &gates::X);
+            }
+        }
+        Instruction::Conditional { condition, op } => {
+            let mut actual: u64 = 0;
+            for bit in 0..condition.creg_size {
+                let val = *cbits.get(&(condition.creg_base + bit)).unwrap_or(&0) as u64;
+                actual |= val << bit;
+            }
+            if actual == condition.creg_value {
+                run_instruction(mps, op, cbits, rng)?;
+            }
+        }
         _ => {
             return Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
-                "MPS simulator only supports unitary one- and two-qubit instructions"
+                "MPS simulator only supports one- and two-qubit unitary gates plus measurement, reset, and conditionals"
             )));
         }
     }
