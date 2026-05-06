@@ -1,10 +1,12 @@
 use pyo3::prelude::*;
 
 use crate::distributed::pblock::PBlockSimulator;
+use crate::monolithic::mps::MpsSimulator;
 use crate::monolithic::statevector::StatevectorSimulator;
 
 enum MonolithicSimulationMode {
     StateVector,
+    Mps,
 }
 
 enum DistributedSimulationMode {
@@ -13,9 +15,10 @@ enum DistributedSimulationMode {
 
 fn parse_monolithic_mode(mode: &str) -> PyResult<MonolithicSimulationMode> {
     match mode.trim().to_ascii_lowercase().replace('-', "_").as_str() {
-        "state_vector" => Ok(MonolithicSimulationMode::StateVector),
+        "state_vector" | "statevector" | "sv" => Ok(MonolithicSimulationMode::StateVector),
+        "mps" => Ok(MonolithicSimulationMode::Mps),
         other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "Unsupported monolithic simulation mode {other:?}; expected 'state_vector'"
+            "Unsupported monolithic simulation mode {other:?}; expected 'state_vector' or 'mps'"
         ))),
     }
 }
@@ -41,6 +44,15 @@ pub fn simulate_monolithic(
     match parse_monolithic_mode(mode)? {
         MonolithicSimulationMode::StateVector => {
             let sim = StatevectorSimulator::new(seed, profile);
+            Ok(sim.simulate(py, circuit)?.into_py(py))
+        }
+        MonolithicSimulationMode::Mps => {
+            if profile {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "profile=True is only supported for mode='state_vector'",
+                ));
+            }
+            let sim = MpsSimulator::new(seed);
             Ok(sim.simulate(py, circuit)?.into_py(py))
         }
     }
@@ -75,6 +87,11 @@ pub fn simulate_monolithic_shots(
         MonolithicSimulationMode::StateVector => {
             let sim = StatevectorSimulator::new(seed, false);
             sim.simulate_shots(py, circuit, shots)
+        }
+        MonolithicSimulationMode::Mps => {
+            let sim = MpsSimulator::new(seed);
+            let result = sim.simulate(py, circuit)?;
+            Ok(result.sample_counts(py, shots, None, seed))
         }
     }
 }

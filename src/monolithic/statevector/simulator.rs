@@ -84,6 +84,42 @@ pub struct SimulationResult {
     prof: Option<Py<SimulationProfile>>,
 }
 
+impl SimulationResult {
+    pub(crate) fn new(
+        sv: Vec<C>,
+        num_qubits: usize,
+        cbits: HashMap<usize, i32>,
+        prof: Option<Py<SimulationProfile>>,
+    ) -> Self {
+        Self {
+            sv,
+            num_qubits,
+            cbits,
+            prof,
+        }
+    }
+
+    pub(crate) fn sample_counts(
+        &self,
+        py: Python,
+        shots: usize,
+        qubits: Option<Vec<usize>>,
+        seed: Option<u64>,
+    ) -> PyObject {
+        let qs: Vec<usize> = qubits.unwrap_or_else(|| (0..self.num_qubits).rev().collect());
+        let mut rng = match seed {
+            Some(s) => ChaCha8Rng::seed_from_u64(s),
+            None => ChaCha8Rng::from_entropy(),
+        };
+        let c = sample_counts(&self.sv, self.num_qubits, shots, &mut rng, Some(&qs));
+        let d = PyDict::new_bound(py);
+        for (k, v) in c {
+            d.set_item(k, v).unwrap();
+        }
+        d.into()
+    }
+}
+
 #[pymethods]
 impl SimulationResult {
     /// Raw complex amplitudes as a NumPy array of shape (2^n,).
@@ -135,17 +171,7 @@ impl SimulationResult {
         qubits: Option<Vec<usize>>,
         seed: Option<u64>,
     ) -> PyObject {
-        let qs: Vec<usize> = qubits.unwrap_or_else(|| (0..self.num_qubits).rev().collect());
-        let mut rng = match seed {
-            Some(s) => ChaCha8Rng::seed_from_u64(s),
-            None => ChaCha8Rng::from_entropy(),
-        };
-        let c = sample_counts(&self.sv, self.num_qubits, shots, &mut rng, Some(&qs));
-        let d = PyDict::new_bound(py);
-        for (k, v) in c {
-            d.set_item(k, v).unwrap();
-        }
-        d.into()
+        self.sample_counts(py, shots, qubits, seed)
     }
 
     /// Compute |<self|other>|^2.
@@ -283,12 +309,7 @@ impl StatevectorSimulator {
             })
             .transpose()?;
 
-        Ok(SimulationResult {
-            sv: state,
-            num_qubits: n,
-            cbits,
-            prof,
-        })
+        Ok(SimulationResult::new(state, n, cbits, prof))
     }
 }
 
