@@ -181,7 +181,7 @@ css = [
 
 [[package]]
 name = "bosonic-converters"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "../dqcomp/packages/bosonic-converters" }
 dependencies = [
     { name = "bosonic-model" },
@@ -234,7 +234,7 @@ requires-dist = [
 
 [[package]]
 name = "bosonic-model"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "../dqcomp/packages/bosonic-model" }
 dependencies = [
     { name = "lark" },
@@ -249,7 +249,7 @@ requires-dist = [
 
 [[package]]
 name = "bosonic-sdk"
-version = "0.1.5"
+version = "0.1.6"
 source = { editable = "../dqcomp/packages/bosonic-sdk" }
 dependencies = [
     { name = "bosonic-converters" },
