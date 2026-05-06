@@ -68,29 +68,6 @@ def _elapsed_ms(fn) -> float:
     fn()
     return (time.perf_counter() - t0) * 1_000
 
-
-def _strip_measurements(circuit):
-    return circuit.model_copy(
-        update={"instructions": [i for i in circuit.instructions if i.kind != "measure"]}
-    )
-
-
-def _add_all_measurements(circuit):
-    from bosonic_model.instructions import MeasureInstruction
-    n = max(r.base + r.size for r in circuit.qregs.values())
-    cregs = {}
-    if not circuit.cregs:
-        from bosonic_model import Register
-        cregs = {"m": Register(name="m", size=n, base=0)}
-    else:
-        cregs = circuit.cregs
-    meas = [MeasureInstruction(qubit=q, cbit=q) for q in range(n)]
-    return circuit.model_copy(update={
-        "cregs": cregs,
-        "instructions": list(circuit.instructions) + meas,
-    })
-
-
 def _n_qubits(circuit) -> int:
     return max(r.base + r.size for r in circuit.qregs.values())
 
