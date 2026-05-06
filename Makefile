@@ -15,6 +15,7 @@ test:
 	uv run --python 3.11 --extra test pytest tests/ -v -s
 
 perf:
+	uv run --python 3.11 maturin develop --release
 	uv run --python 3.11 --extra test pytest examples/test_performance.py -v -s
 
 build:
