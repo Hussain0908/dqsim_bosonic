@@ -8,9 +8,9 @@ then simulates with SHOTS shots via three independent paths:
   2. dqsim pblock        — simulate_distributed_shots on the DistributedCircuit
   3. Qiskit Aer SV       — AerSimulator(statevector) on dist_circuit_as_mono
 
-All three paths use the same cbit indices for data-qubit marginalisation
-(cbits that record measurements of Q-prefixed registers), compared within
-statistical tolerance (5σ at 1000 shots ≈ 0.08).
+All three paths operate on the same distributed circuit representation so qubit
+ordering is consistent. Data-qubit marginals (Q-prefixed registers) are compared
+within statistical tolerance.
 """
 
 from __future__ import annotations

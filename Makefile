@@ -1,4 +1,4 @@
-.PHONY: build publish test
+.PHONY: build publish test perf
 
 DIST_DIR := dist
 REPOSITORY ?= testpypi
