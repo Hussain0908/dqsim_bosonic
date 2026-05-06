@@ -1,6 +1,6 @@
 from dqsim._core import (
-    CompositeResult,
-    CompositeSimulator,
+    PBlockResult,
+    PBlockSimulator,
     SimulationProfile,
     SimulationResult,
     StatevectorSimulator,
@@ -10,6 +10,6 @@ __all__ = [
     "StatevectorSimulator",
     "SimulationResult",
     "SimulationProfile",
-    "CompositeSimulator",
-    "CompositeResult",
+    "PBlockSimulator",
+    "PBlockResult",
 ]

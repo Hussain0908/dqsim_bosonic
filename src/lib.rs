@@ -11,7 +11,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<simulator::StatevectorSimulator>()?;
     m.add_class::<simulator::SimulationResult>()?;
     m.add_class::<simulator::SimulationProfile>()?;
-    m.add_class::<pblock::CompositeSimulator>()?;
-    m.add_class::<pblock::CompositeResult>()?;
+    m.add_class::<pblock::PBlockSimulator>()?;
+    m.add_class::<pblock::PBlockResult>()?;
     Ok(())
 }

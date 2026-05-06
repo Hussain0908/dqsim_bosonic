@@ -1,4 +1,4 @@
 mod model;
 mod simulator;
 
-pub use simulator::{CompositeResult, CompositeSimulator};
+pub use simulator::{PBlockResult, PBlockSimulator};

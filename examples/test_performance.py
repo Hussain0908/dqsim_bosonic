@@ -7,12 +7,12 @@ Two timing axes are reported for each circuit:
 
   per-run (ms)
     dqsim-sv   : StatevectorSimulator.simulate()
-    dqsim-comp : HypergraphDistributor.distribute() + CompositeSimulator.simulate()
+    dqsim-pblock : HypergraphDistributor.distribute() + PBlockSimulator.simulate()
     aer-sv     : AerSimulator(statevector).run(qc, shots=1) on a measurement-free circuit
 
   per-shot (µs)
     dqsim-sv   : (simulate() + result.counts(SHOTS)) / SHOTS
-    dqsim-comp : (distribute() + simulate() + sample SHOTS) / SHOTS
+    dqsim-pblock : (distribute() + simulate() + sample SHOTS) / SHOTS
     aer        : AerSimulator().run(qc_with_meas, shots=SHOTS) / SHOTS
 
 All timings are from a single call.
@@ -31,7 +31,7 @@ from bosonic_sdk.distributor.distributors.hypergraph_distributor import Hypergra
 from bosonic_sdk.distributor.distributors.disqco_distributor import DisqcoDistributor
 from bosonic_sdk.simulation.simulator import Simulator as BosonicSimulator
 
-from dqsim import CompositeSimulator, StatevectorSimulator
+from dqsim import PBlockSimulator, StatevectorSimulator
 
 # ---------------------------------------------------------------------------
 # Config
@@ -135,15 +135,15 @@ def _bench_dqsim_sv_shots(circuit) -> float:
     return _elapsed_ms(lambda: sim.simulate_shots(circuit, shots=SHOTS))
 
 
-def _bench_dqsim_comp_run(distributed) -> float:
-    """Time (ms) for CompositeSimulator.simulate() on a pre-distributed circuit."""
-    sim = CompositeSimulator(seed=SEED)
+def _bench_dqsim_pblock_run(distributed) -> float:
+    """Time (ms) for PBlockSimulator.simulate() on a pre-distributed circuit."""
+    sim = PBlockSimulator(seed=SEED)
     return _elapsed_ms(lambda: sim.simulate(distributed))
 
 
-def _bench_dqsim_comp_shots(distributed) -> float:
+def _bench_dqsim_pblock_shots(distributed) -> float:
     """Time (ms) for simulate_shots() — true per-shot trajectories."""
-    sim = CompositeSimulator(seed=SEED)
+    sim = PBlockSimulator(seed=SEED)
     return _elapsed_ms(lambda: sim.simulate_shots(distributed, shots=SHOTS))
 
 
@@ -177,19 +177,19 @@ _COL_W = {
     "name":             16,
     "qb":                4,
     "sv_run":           12,
-    "comp_run":         13,
+    "pblock_run":       13,
     "aer_run":          10,
     "sv_shot":          14,
-    "comp_shot":        15,
+    "pblock_shot":      15,
     "aer_shot":         11,
     "sv_speedup":       12,
-    "comp_speedup":     13,
+    "pblock_speedup":   13,
 }
 
 _HEADER = (
     f"{'Circuit':<16}  {'Qb':>4}  "
-    f"{'sv run(ms)':>12}  {'comp(L=T) run':>14}  {'comp(L=F) run':>14}  {'aer run(ms)':>11}  "
-    f"{'sv shot(µs)':>12}  {'comp(L=T) shot':>15}  {'comp(L=F) shot':>15}  {'aer shot(µs)':>12}  "
+    f"{'sv run(ms)':>12}  {'pblock(L=T) run':>16}  {'pblock(L=F) run':>16}  {'aer run(ms)':>11}  "
+    f"{'sv shot(µs)':>12}  {'pblock(L=T) shot':>17}  {'pblock(L=F) shot':>17}  {'aer shot(µs)':>12}  "
     f"{'sv speedup':>11}  {'L=T speedup':>12}  {'L=F speedup':>12}"
 )
 
@@ -207,24 +207,24 @@ def _row(
     name: str,
     qb: int,
     sv_run: float,
-    comp_run: float,
+    pblock_run: float,
     raw_run: float | None,
     aer_run: float,
     sv_shot_total: float,
-    comp_shot_total: float,
+    pblock_shot_total: float,
     raw_shot_total: float | None,
     aer_shot_total: float,
 ) -> str:
     sv_shot_us = sv_shot_total / SHOTS * 1_000
-    comp_shot_us = comp_shot_total / SHOTS * 1_000
+    pblock_shot_us = pblock_shot_total / SHOTS * 1_000
     raw_shot_us = raw_shot_total / SHOTS * 1_000 if raw_shot_total is not None else None
     aer_shot_us = aer_shot_total / SHOTS * 1_000
 
     return (
         f"{name:<16}  {qb:>4}  "
-        f"{sv_run:>12.2f}  {comp_run:>14.2f}  {_fmt_ms(raw_run, 14)}  {aer_run:>11.2f}  "
-        f"{sv_shot_us:>12.2f}  {comp_shot_us:>15.2f}  {_fmt_ms(raw_shot_us, 15)}  {aer_shot_us:>12.2f}  "
-        f"{aer_run / sv_run:>11.1f}x  {aer_run / comp_run:>12.1f}x  {_fmt_speedup(aer_run, raw_run, 12)}"
+        f"{sv_run:>12.2f}  {pblock_run:>16.2f}  {_fmt_ms(raw_run, 16)}  {aer_run:>11.2f}  "
+        f"{sv_shot_us:>12.2f}  {pblock_shot_us:>17.2f}  {_fmt_ms(raw_shot_us, 17)}  {aer_shot_us:>12.2f}  "
+        f"{aer_run / sv_run:>11.1f}x  {aer_run / pblock_run:>12.1f}x  {_fmt_speedup(aer_run, raw_run, 12)}"
     )
 
 
@@ -269,13 +269,13 @@ class TestPerformance:
             sv_run = _bench_dqsim_sv_run(circuit_no_meas)
             print(f" {sv_run:.2f} ms", flush=True)
 
-            print(f"         dqsim-comp run (lowered=True) ...", end="", flush=True)
-            comp_run = _bench_dqsim_comp_run(distributed_lowered)
-            print(f" {comp_run:.2f} ms", flush=True)
+            print(f"         dqsim-pblock run (lowered=True) ...", end="", flush=True)
+            pblock_run = _bench_dqsim_pblock_run(distributed_lowered)
+            print(f" {pblock_run:.2f} ms", flush=True)
 
             if distributed_symbolic is not None:
-                print(f"         dqsim-comp run (lowered=False) ...", end="", flush=True)
-                raw_run = _bench_dqsim_comp_run(distributed_symbolic)
+                print(f"         dqsim-pblock run (lowered=False) ...", end="", flush=True)
+                raw_run = _bench_dqsim_pblock_run(distributed_symbolic)
                 print(f" {raw_run:.2f} ms", flush=True)
             else:
                 raw_run = None
@@ -289,13 +289,13 @@ class TestPerformance:
             sv_shot_total = _bench_dqsim_sv_shots(distributed_lowered.as_monolithic_circuit())
             print(f" {sv_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
-            print(f"         dqsim-comp {SHOTS} shots (lowered=True) ...", end="", flush=True)
-            comp_shot_total = _bench_dqsim_comp_shots(distributed_lowered)
-            print(f" {comp_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
+            print(f"         dqsim-pblock {SHOTS} shots (lowered=True) ...", end="", flush=True)
+            pblock_shot_total = _bench_dqsim_pblock_shots(distributed_lowered)
+            print(f" {pblock_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
             if distributed_symbolic is not None:
-                print(f"         dqsim-comp {SHOTS} shots (lowered=False) ...", end="", flush=True)
-                raw_shot_total = _bench_dqsim_comp_shots(distributed_symbolic)
+                print(f"         dqsim-pblock {SHOTS} shots (lowered=False) ...", end="", flush=True)
+                raw_shot_total = _bench_dqsim_pblock_shots(distributed_symbolic)
                 print(f" {raw_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
             else:
                 raw_shot_total = None
@@ -304,19 +304,19 @@ class TestPerformance:
             aer_shot_total = _bench_aer_shots(distributed_lowered.as_monolithic_circuit())
             print(f" {aer_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
-            rows.append((name, n, sv_run, comp_run, raw_run, aer_run, sv_shot_total, comp_shot_total, raw_shot_total, aer_shot_total))
+            rows.append((name, n, sv_run, pblock_run, raw_run, aer_run, sv_shot_total, pblock_shot_total, raw_shot_total, aer_shot_total))
             print(f"         done.", flush=True)
 
         print(f"\n\nPerformance: dqsim vs Qiskit Aer  (SHOTS={SHOTS}, single-call timing)\n")
         print(_HEADER)
         print(_SEP)
-        for name, qb, sv_run, comp_run, raw_run, aer_run, sv_shot, comp_shot, raw_shot, aer_shot in rows:
-            print(_row(name, qb, sv_run, comp_run, raw_run, aer_run, sv_shot, comp_shot, raw_shot, aer_shot))
+        for name, qb, sv_run, pblock_run, raw_run, aer_run, sv_shot, pblock_shot, raw_shot, aer_shot in rows:
+            print(_row(name, qb, sv_run, pblock_run, raw_run, aer_run, sv_shot, pblock_shot, raw_shot, aer_shot))
         print(_SEP)
         print(
             "  sv run(ms)   : dqsim StatevectorSimulator.simulate() — one statevector evolution\n"
-            "  comp run(ms) : CompositeSimulator.simulate() on lowered=True distributed circuit\n"
-            "  raw run(ms)  : CompositeSimulator.simulate() on lowered=False distributed circuit\n"
+            "  pblock run(ms): PBlockSimulator.simulate() on lowered=True distributed circuit\n"
+            "  raw run(ms)   : PBlockSimulator.simulate() on lowered=False distributed circuit\n"
             "  aer run(ms)  : AerSimulator(statevector).run(shots=1) — one statevector evolution\n"
             "  *  shot(µs)  : total shot-batch time / SHOTS  (dqsim: simulate+counts; aer: run(shots=SHOTS))\n"
             "  *  speedup   : aer_run / dqsim_run  (>1 = dqsim faster)\n"

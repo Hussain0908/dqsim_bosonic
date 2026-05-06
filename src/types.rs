@@ -291,33 +291,33 @@ pub fn fuse_circuit<'a>(instructions: &'a [Instruction]) -> Vec<FusedInstruction
     out
 }
 
-/// Owned fused entry for the composite simulator shot loop.
+/// Owned fused entry for the pblock simulator shot loop.
 /// Unlike FusedInstruction<'a>, this is 'static and Send.
-pub enum FusedCompositeEntry {
+pub enum FusedPBlockEntry {
     /// Reference back into node_circuits by (node, local_idx).
     Original { node: usize, local_idx: usize },
     /// Pre-computed single-qubit matrix (no circuit reference needed).
     Fused1Q { qubit: usize, matrix: [[C; 2]; 2] },
 }
 
-/// Fuse consecutive single-qubit gates in the globally-sorted composite entry stream.
+/// Fuse consecutive single-qubit gates in the globally-sorted pblock entry stream.
 /// `entries` is `&[(order, node, local_idx)]` already sorted by order.
-pub fn fuse_composite_entries(
+pub fn fuse_pblock_entries(
     entries: &[(i64, usize, usize)],
     node_circuits: &HashMap<usize, Circuit>,
-) -> Vec<FusedCompositeEntry> {
+) -> Vec<FusedPBlockEntry> {
     let mut pending: HashMap<usize, [[C; 2]; 2]> = HashMap::new();
-    let mut out: Vec<FusedCompositeEntry> = Vec::with_capacity(entries.len());
+    let mut out: Vec<FusedPBlockEntry> = Vec::with_capacity(entries.len());
 
     let identity: [[C; 2]; 2] = [
         [C::new(1.0, 0.0), C::new(0.0, 0.0)],
         [C::new(0.0, 0.0), C::new(1.0, 0.0)],
     ];
 
-    let mut flush_qubit = |q: usize, pending: &mut HashMap<usize, [[C; 2]; 2]>, out: &mut Vec<FusedCompositeEntry>| {
+    let flush_qubit = |q: usize, pending: &mut HashMap<usize, [[C; 2]; 2]>, out: &mut Vec<FusedPBlockEntry>| {
         if let Some(m) = pending.remove(&q) {
             if !is_identity_2x2(&m) {
-                out.push(FusedCompositeEntry::Fused1Q { qubit: q, matrix: m });
+                out.push(FusedPBlockEntry::Fused1Q { qubit: q, matrix: m });
             }
         }
     };
@@ -332,7 +332,7 @@ pub fn fuse_composite_entries(
             for q in &touched {
                 flush_qubit(*q, &mut pending, &mut out);
             }
-            out.push(FusedCompositeEntry::Original { node, local_idx });
+            out.push(FusedPBlockEntry::Original { node, local_idx });
         }
     }
 

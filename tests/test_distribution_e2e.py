@@ -25,7 +25,7 @@ from bosonic_model.instructions import (
 )
 from bosonic_sdk.distributor.distributors.bosonic_distributor import BosonicDistributor
 
-from dqsim import CompositeSimulator, StatevectorSimulator
+from dqsim import PBlockSimulator, StatevectorSimulator
 
 SEED = 42
 
@@ -74,9 +74,9 @@ def _assert_marginals_match(original: dict[int, float], distributed: dict[int, f
         )
 
 
-def _composite_simulate(circuit: Circuit, *, nodes: int, qubits_per_node: int) -> dict[int, float]:
+def _pblock_simulate(circuit: Circuit, *, nodes: int, qubits_per_node: int) -> dict[int, float]:
     distributed = BosonicDistributor().distribute(circuit, nodes=nodes, qubits_per_node=qubits_per_node)
-    result = CompositeSimulator(seed=SEED).simulate(distributed)
+    result = PBlockSimulator(seed=SEED).simulate(distributed)
     probs = result.probabilities()
     data_indices = result.physical_qubits[::2]  # even physical qubits are data
     return _marginalise(probs, data_indices)
@@ -119,7 +119,7 @@ class TestBosonicDistributorE2E:
         _assert_marginals_match(original, distributed)
 
 
-class TestCompositeSimulatorE2E:
+class TestPBlockSimulatorE2E:
 
     def test_x_cx_deterministic(self) -> None:
         circuit = _circuit(2, [
@@ -127,7 +127,7 @@ class TestCompositeSimulatorE2E:
             CxInstruction(control=0, target=1, qubits=[0, 1], params=[]),
         ])
         original = _simulate(circuit)
-        result = _composite_simulate(circuit, nodes=2, qubits_per_node=1)
+        result = _pblock_simulate(circuit, nodes=2, qubits_per_node=1)
         _assert_marginals_match(original, result)
         assert abs(result.get(3, 0.0) - 1.0) < 1e-6
 
@@ -137,7 +137,7 @@ class TestCompositeSimulatorE2E:
             CxInstruction(control=0, target=1, qubits=[0, 1], params=[]),
         ])
         original = _simulate(circuit)
-        result = _composite_simulate(circuit, nodes=2, qubits_per_node=1)
+        result = _pblock_simulate(circuit, nodes=2, qubits_per_node=1)
         _assert_marginals_match(original, result)
 
     def test_local_only_circuit(self) -> None:
@@ -146,18 +146,18 @@ class TestCompositeSimulatorE2E:
             HInstruction(qubit=1, qubits=[1]),
         ])
         original = _simulate(circuit)
-        result = _composite_simulate(circuit, nodes=2, qubits_per_node=1)
+        result = _pblock_simulate(circuit, nodes=2, qubits_per_node=1)
         _assert_marginals_match(original, result)
 
-    def test_composite_matches_monolithic_marginals(self) -> None:
-        """CompositeSimulator data-qubit marginals must equal monolithic marginals exactly."""
+    def test_pblock_matches_monolithic_marginals(self) -> None:
+        """PBlockSimulator data-qubit marginals must equal monolithic marginals exactly."""
         circuit = _circuit(2, [
             HInstruction(qubit=0, qubits=[0]),
             CxInstruction(control=0, target=1, qubits=[0, 1], params=[]),
         ])
         monolithic_marginals = _distribute_and_simulate(circuit, nodes=2, qubits_per_node=1)
-        composite_marginals = _composite_simulate(circuit, nodes=2, qubits_per_node=1)
-        _assert_marginals_match(monolithic_marginals, composite_marginals)
+        pblock_marginals = _pblock_simulate(circuit, nodes=2, qubits_per_node=1)
+        _assert_marginals_match(monolithic_marginals, pblock_marginals)
 
 
 # ---------------------------------------------------------------------------
@@ -217,12 +217,12 @@ _ALL_SMALL: list[tuple[str, Circuit, int, int]] = [
 
 
 class TestAllSmall:
-    """Parametrised: monolithic SV == CompositeSimulator marginals for every circuit in _ALL_SMALL."""
+    """Parametrised: monolithic SV == PBlockSimulator marginals for every circuit in _ALL_SMALL."""
 
     @pytest.mark.parametrize("name,circuit,nodes,qpn", _ALL_SMALL, ids=[t[0] for t in _ALL_SMALL])
-    def test_composite_matches_monolithic(
+    def test_pblock_matches_monolithic(
         self, name: str, circuit: Circuit, nodes: int, qpn: int
     ) -> None:
         monolithic = _simulate(circuit)
-        composite = _composite_simulate(circuit, nodes=nodes, qubits_per_node=qpn)
-        _assert_marginals_match(monolithic, composite)
+        pblock = _pblock_simulate(circuit, nodes=nodes, qubits_per_node=qpn)
+        _assert_marginals_match(monolithic, pblock)

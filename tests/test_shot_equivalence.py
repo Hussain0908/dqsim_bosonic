@@ -2,7 +2,7 @@
 Shot-based equivalence tests using real QASMBench circuits.
 
 For each circuit, runs SHOTS samples from both the monolithic statevector
-simulator and the composite (pblock) simulator, then asserts that the
+simulator and the pblock simulator, then asserts that the
 estimated probability distributions agree within a sampling-noise tolerance.
 
 This approach works even for circuits with mid-circuit measurements because
@@ -18,7 +18,7 @@ import qasmpi
 from bosonic_model.qasm.translator import Translator
 from bosonic_sdk.distributor.distributors.bosonic_distributor import BosonicDistributor
 
-from dqsim import CompositeSimulator, StatevectorSimulator
+from dqsim import PBlockSimulator, StatevectorSimulator
 
 SEED = 42
 SHOTS = 2000
@@ -59,10 +59,10 @@ def _monolithic_probs(circuit) -> dict[int, float]:
     return {int(bits, 2): n / SHOTS for bits, n in counts.items()}
 
 
-def _composite_probs(circuit, *, nodes: int, qubits_per_node: int) -> dict[int, float]:
-    """Estimate probability distribution by sampling the composite simulator output."""
+def _pblock_probs(circuit, *, nodes: int, qubits_per_node: int) -> dict[int, float]:
+    """Estimate probability distribution by sampling the pblock simulator output."""
     distributed = BosonicDistributor().distribute(circuit, nodes=nodes, qubits_per_node=qubits_per_node)
-    result = CompositeSimulator(seed=SEED).simulate(distributed)
+    result = PBlockSimulator(seed=SEED).simulate(distributed)
     marginal = _marginalise(result.probabilities(), result.physical_qubits[::2])
 
     rng = np.random.default_rng(SEED)
@@ -82,7 +82,7 @@ def _assert_distributions_match(
         pa = a.get(state, 0.0)
         pb = b.get(state, 0.0)
         assert abs(pa - pb) < tol, (
-            f"state {state:b}: monolithic={pa:.4f}, composite={pb:.4f}, diff={abs(pa-pb):.4f} > tol={tol}"
+            f"state {state:b}: monolithic={pa:.4f}, pblock={pb:.4f}, diff={abs(pa-pb):.4f} > tol={tol}"
         )
 
 
@@ -107,7 +107,7 @@ _SHOT_SMALL = [
 
 
 class TestShotEquivalence:
-    """Composite simulator matches monolithic SV within sampling noise."""
+    """PBlock simulator matches monolithic SV within sampling noise."""
 
     @pytest.mark.parametrize(
         "name,circuit,nodes,qpn",
@@ -118,5 +118,5 @@ class TestShotEquivalence:
         self, name: str, circuit, nodes: int, qpn: int
     ) -> None:
         mono = _monolithic_probs(circuit)
-        comp = _composite_probs(circuit, nodes=nodes, qubits_per_node=qpn)
-        _assert_distributions_match(mono, comp)
+        pblock = _pblock_probs(circuit, nodes=nodes, qubits_per_node=qpn)
+        _assert_distributions_match(mono, pblock)

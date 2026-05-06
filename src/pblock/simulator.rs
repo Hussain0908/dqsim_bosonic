@@ -9,16 +9,16 @@ use rayon::prelude::*;
 
 use crate::engine::{apply_n_qubit, apply_one_qubit, apply_n_qubit_seq, apply_one_qubit_seq, measure_qubit, measure_qubit_seq, marginal_probs};
 use crate::gates;
-use crate::types::{Circuit, FusedCompositeEntry, Instruction, format_cbits, fuse_composite_entries};
+use crate::types::{Circuit, FusedPBlockEntry, Instruction, format_cbits, fuse_pblock_entries};
 
 use super::model::{Block, BlockPool, C, m4, m8, m16, m32};
 
 // ---------------------------------------------------------------------------
-// CompositeResult
+// PBlockResult
 // ---------------------------------------------------------------------------
 
 #[pyclass]
-pub struct CompositeResult {
+pub struct PBlockResult {
     sv: Vec<C>,
     num_qubits: usize,
     phys_qubits: Vec<usize>,
@@ -26,7 +26,7 @@ pub struct CompositeResult {
 }
 
 #[pymethods]
-impl CompositeResult {
+impl PBlockResult {
     /// Raw complex amplitudes as a NumPy array. Local bit i = physical qubit phys_qubits[i].
     #[getter]
     fn statevector<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<C>> {
@@ -85,16 +85,16 @@ impl CompositeResult {
 }
 
 // ---------------------------------------------------------------------------
-// CompositeSimulator
+// PBlockSimulator
 // ---------------------------------------------------------------------------
 
 #[pyclass]
-pub struct CompositeSimulator {
+pub struct PBlockSimulator {
     seed: Option<u64>,
 }
 
 #[pymethods]
-impl CompositeSimulator {
+impl PBlockSimulator {
     #[new]
     #[pyo3(signature = (seed=None))]
     pub fn new(seed: Option<u64>) -> Self {
@@ -169,7 +169,7 @@ impl CompositeSimulator {
         let base_seed = self.seed.unwrap_or_else(|| rand::thread_rng().gen());
 
         // Pre-fuse consecutive single-qubit gates across the globally-sorted stream.
-        let fused_entries = fuse_composite_entries(&entries, &node_circuits);
+        let fused_entries = fuse_pblock_entries(&entries, &node_circuits);
 
         // ── Shot loop — parallel across shots via rayon ───────────────────────
         let counts = py.allow_threads(|| -> Result<HashMap<String, usize>, String> {
@@ -182,14 +182,14 @@ impl CompositeSimulator {
 
                     for entry in &fused_entries {
                         match entry {
-                            FusedCompositeEntry::Fused1Q { qubit, matrix } => {
+                            FusedPBlockEntry::Fused1Q { qubit, matrix } => {
                                 let block_idx = pool.ensure_single_block(&[*qubit]);
                                 let block = pool.blocks[block_idx].as_mut().unwrap();
                                 let local_q = block.local(*qubit);
                                 let n = block.qubits.len();
                                 apply_one_qubit_seq(&mut block.state, matrix, local_q, n, &[]);
                             }
-                            FusedCompositeEntry::Original { node, local_idx } => {
+                            FusedPBlockEntry::Original { node, local_idx } => {
                                 let inst = &node_circuits[node].instructions[*local_idx];
                                 let qubits = inst.qubits();
                                 if qubits.is_empty() { continue; }
@@ -217,11 +217,11 @@ impl CompositeSimulator {
         Ok(d.into())
     }
 
-    /// Simulate a DistributedCircuit using block-composite statevectors.
+    /// Simulate a DistributedCircuit using PBlock statevectors.
     ///
     /// Starts with one statevector per node. Merges blocks on demand when
     /// cross-node gates are encountered. Never calls as_monolithic_circuit().
-    pub fn simulate(&self, _py: Python, distributed: &Bound<PyAny>) -> PyResult<CompositeResult> {
+    pub fn simulate(&self, _py: Python, distributed: &Bound<PyAny>) -> PyResult<PBlockResult> {
         // ── 1. Extract _instruction_index: dict[int(py_id), int(order)] ──────
         let instr_index_py = distributed.getattr("_instruction_index")?;
         let instr_index_dict = instr_index_py.downcast::<PyDict>()?;
@@ -385,7 +385,7 @@ impl CompositeSimulator {
         let num_qubits = final_block.qubits.len();
         let phys_qubits = final_block.qubits.clone();
 
-        Ok(CompositeResult {
+        Ok(PBlockResult {
             sv: final_block.state,
             num_qubits,
             phys_qubits,
@@ -599,7 +599,7 @@ fn dispatch(
                 }
                 other => {
                     return Err(pyo3::exceptions::PyNotImplementedError::new_err(format!(
-                        "Unsupported gate in composite simulator: {other:?}"
+                        "Unsupported gate in pblock simulator: {other:?}"
                     )));
                 }
             }
@@ -840,7 +840,7 @@ fn dispatch_par(
                     );
                 }
                 other => {
-                    return Err(format!("Unsupported gate in composite simulator: {other:?}"));
+                    return Err(format!("Unsupported gate in pblock simulator: {other:?}"));
                 }
             }
         }
@@ -874,4 +874,3 @@ fn dispatch_par(
     }
     Ok(())
 }
-
