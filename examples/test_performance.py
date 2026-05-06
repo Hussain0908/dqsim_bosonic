@@ -75,29 +75,6 @@ def _elapsed_ms(fn) -> float:
     fn()
     return (time.perf_counter() - t0) * 1_000
 
-
-def _strip_measurements(circuit):
-    return circuit.model_copy(
-        update={"instructions": [i for i in circuit.instructions if i.kind != "measure"]}
-    )
-
-
-def _add_all_measurements(circuit):
-    from bosonic_model.instructions import MeasureInstruction
-    n = max(r.base + r.size for r in circuit.qregs.values())
-    cregs = {}
-    if not circuit.cregs:
-        from bosonic_model import Register
-        cregs = {"m": Register(name="m", size=n, base=0)}
-    else:
-        cregs = circuit.cregs
-    meas = [MeasureInstruction(qubit=q, cbit=q) for q in range(n)]
-    return circuit.model_copy(update={
-        "cregs": cregs,
-        "instructions": list(circuit.instructions) + meas,
-    })
-
-
 def _n_qubits(circuit) -> int:
     return max(r.base + r.size for r in circuit.qregs.values())
 
@@ -263,22 +240,23 @@ class TestPerformance:
         for idx, (name, nodes, qpn) in enumerate(_BENCH_CIRCUITS, 1):
             print(f"  [{idx}/{total}] {name} ...", flush=True)
 
-            raw_circuit = Translator().from_qasm(qasmpi.get_circuit(name))
-            circuit_no_meas = _strip_measurements(raw_circuit)
-            n = _n_qubits(circuit_no_meas)
+            qasm = qasmpi.get_circuit(name)
+            circuit = Translator().from_qasm(qasm)
+            n = _n_qubits(circuit)
 
             distributed_lowered = dist.distribute(
-                circuit_no_meas,
+                circuit,
                 nodes=nodes,
                 qubits_per_node=qpn,
                 lowered=True,
             )
+
             actual_qpn = {n: len(qs) for n, qs in distributed_lowered.qubits_per_node.items()}
             print(f"         nodes={nodes}, qubits_per_node={qpn} → actual: {actual_qpn}", flush=True)
             
             try:
                 distributed_symbolic = dist.distribute(
-                    circuit_no_meas,
+                    circuit,
                     nodes=nodes,
                     qubits_per_node=qpn,
                     lowered=False,
@@ -288,7 +266,7 @@ class TestPerformance:
                 distributed_symbolic = None
 
             print(f"         dqsim-sv run ...", end="", flush=True)
-            sv_run = _bench_dqsim_sv_run(circuit_no_meas)
+            sv_run = _bench_dqsim_sv_run(circuit)
             print(f" {sv_run:.2f} ms", flush=True)
 
             try:
@@ -309,7 +287,6 @@ class TestPerformance:
                 print(f" {raw_run:.2f} ms", flush=True)
             else:
                 raw_run = None
-            
 
             print(f"         bosonic (aer) sv run ...", end="", flush=True)
             aer_run = _bench_aer_sv_run(distributed_lowered.as_monolithic_circuit())
