@@ -1,7 +1,7 @@
 """
 Performance benchmark: dqsim vs Qiskit Aer.
 
-Run with:  pytest tests/test_performance.py -v -s
+Run with:  pytest examples/test_performance.py -v -s
 
 Two timing axes are reported for each circuit:
 
@@ -15,13 +15,11 @@ Two timing axes are reported for each circuit:
     dqsim-comp : (distribute() + simulate() + sample SHOTS) / SHOTS
     aer        : AerSimulator().run(qc_with_meas, shots=SHOTS) / SHOTS
 
-All per-run numbers are the median of REPS independent calls.
-All per-shot numbers are the median of REPS full shot-batch calls.
+All timings are from a single call.
 """
 
 from __future__ import annotations
 
-import statistics
 import time
 
 import numpy as np
@@ -30,6 +28,7 @@ import qasmpi
 from bosonic_model.qasm import QasmError, Translator
 from bosonic_converters import CircuitConverters
 from bosonic_sdk.distributor.distributors.hypergraph_distributor import HypergraphDistributor
+from bosonic_sdk.distributor.distributors.disqco_distributor import DisqcoDistributor
 from bosonic_sdk.simulation.simulator import Simulator as BosonicSimulator
 
 from dqsim import CompositeSimulator, StatevectorSimulator
@@ -40,13 +39,12 @@ from dqsim import CompositeSimulator, StatevectorSimulator
 
 SEED = 42
 SHOTS = 1000
-REPS = 5  # timing repetitions per metric; median is reported
 
 # (qasmpi_name, nodes, qubits_per_node)
 # nodes × qubits_per_node must be >= circuit qubit count.
 _BENCH_CIRCUITS = [
     ("deutsch_n2",    2, 1),
-    ("toffoli_n3",    2, 2),
+    ("toffoli_n3",    2, 3),
     ("adder_n4",      2, 2),
     ("qft_n4",        2, 2),
     ("bell_n4",       2, 2),
@@ -55,20 +53,20 @@ _BENCH_CIRCUITS = [
     ("ising_n10",     2, 5),
     # ("qft_n18",       2, 9),
     # ("square_root_n18", 2, 9),
+    # ("dnn_n16",       2, 8),
+    # ("cc_n12",        2, 6),
+    # ("bv_n14",         2, 7),
 ]
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _median_ms(fn, reps: int = REPS) -> float:
-    """Return median wall-clock time of fn() over `reps` calls, in milliseconds."""
-    times = []
-    for _ in range(reps):
-        t0 = time.perf_counter()
-        fn()
-        times.append((time.perf_counter() - t0) * 1_000)
-    return statistics.median(times)
+def _elapsed_ms(fn) -> float:
+    """Return wall-clock time of one fn() call, in milliseconds."""
+    t0 = time.perf_counter()
+    fn()
+    return (time.perf_counter() - t0) * 1_000
 
 
 def _strip_measurements(circuit):
@@ -126,49 +124,49 @@ def _lowered_ebits(distributed) -> int:
 # ---------------------------------------------------------------------------
 
 def _bench_dqsim_sv_run(circuit) -> float:
-    """Median time (ms) for a single StatevectorSimulator.simulate() call."""
+    """Time (ms) for a single StatevectorSimulator.simulate() call."""
     sim = StatevectorSimulator(seed=SEED)
-    return _median_ms(lambda: sim.simulate(circuit))
+    return _elapsed_ms(lambda: sim.simulate(circuit))
 
 
 def _bench_dqsim_sv_shots(circuit) -> float:
-    """Median time (ms) for simulate_shots() — true per-shot trajectories."""
+    """Time (ms) for simulate_shots() — true per-shot trajectories."""
     sim = StatevectorSimulator(seed=SEED)
-    return _median_ms(lambda: sim.simulate_shots(circuit, shots=SHOTS))
+    return _elapsed_ms(lambda: sim.simulate_shots(circuit, shots=SHOTS))
 
 
 def _bench_dqsim_comp_run(distributed) -> float:
-    """Median time (ms) for CompositeSimulator.simulate() on a pre-distributed circuit."""
+    """Time (ms) for CompositeSimulator.simulate() on a pre-distributed circuit."""
     sim = CompositeSimulator(seed=SEED)
-    return _median_ms(lambda: sim.simulate(distributed))
+    return _elapsed_ms(lambda: sim.simulate(distributed))
 
 
 def _bench_dqsim_comp_shots(distributed) -> float:
-    """Median time (ms) for simulate_shots() — true per-shot trajectories."""
+    """Time (ms) for simulate_shots() — true per-shot trajectories."""
     sim = CompositeSimulator(seed=SEED)
-    return _median_ms(lambda: sim.simulate_shots(distributed, shots=SHOTS))
+    return _elapsed_ms(lambda: sim.simulate_shots(distributed, shots=SHOTS))
 
 
 def _bench_aer_sv_run(circuit) -> float:
-    """Median time (ms) for Aer statevector run — preprocessing and backend init excluded."""
+    """Time (ms) for Aer statevector run — preprocessing and backend init excluded."""
     qc = CircuitConverters.to_qiskit(circuit)
     if qc.num_clbits == 0:
         qc.measure_all()
     sim = BosonicSimulator()
     qc = sim.prepare(qc)
     backend = sim.build_backend("statevector")
-    return _median_ms(lambda: sim.simulate(qc, backend, shots=1))
+    return _elapsed_ms(lambda: sim.simulate(qc, backend, shots=1))
 
 
 def _bench_aer_shots(circuit) -> float:
-    """Median time (ms) for Aer statevector shots — preprocessing and backend init excluded."""
+    """Time (ms) for Aer statevector shots — preprocessing and backend init excluded."""
     qc = CircuitConverters.to_qiskit(circuit)
     if qc.num_clbits == 0:
         qc.measure_all()
     sim = BosonicSimulator()
     qc = sim.prepare(qc)
     backend = sim.build_backend("statevector")
-    return _median_ms(lambda: sim.simulate(qc, backend, shots=SHOTS))
+    return _elapsed_ms(lambda: sim.simulate(qc, backend, shots=SHOTS))
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +235,7 @@ def _row(
 class TestPerformance:
     def test_benchmark_table(self) -> None:
         rows = []
-        dist = HypergraphDistributor()
+        dist = DisqcoDistributor()
 
         total = len(_BENCH_CIRCUITS)
         for idx, (name, nodes, qpn) in enumerate(_BENCH_CIRCUITS, 1):
@@ -253,34 +251,19 @@ class TestPerformance:
                 qubits_per_node=qpn,
                 lowered=True,
             )
-            distributed_symbolic = dist.distribute(
-                circuit_no_meas,
-                nodes=nodes,
-                qubits_per_node=qpn,
-                lowered=False,
-            )
-            symbolic_stats = _symbolic_stats(distributed_symbolic)
+            actual_qpn = {n: len(qs) for n, qs in distributed_lowered.qubits_per_node.items()}
+            print(f"         nodes={nodes}, qubits_per_node={qpn} → actual: {actual_qpn}", flush=True)
+            
             try:
-                if symbolic_stats["remote_swap"]:
-                    raise ValueError(
-                        "symbolic remote_swap is not supported by dqsim CompositeSimulator; "
-                        "use lowered=True for SWAP boundaries"
-                    )
+                distributed_symbolic = dist.distribute(
+                    circuit_no_meas,
+                    nodes=nodes,
+                    qubits_per_node=qpn,
+                    lowered=False,
+                )
             except ValueError as exc:
                 print(f"         lowered=False benchmark unavailable: {exc}", flush=True)
-                distributed_symbolic_for_bench = None
-            else:
-                distributed_symbolic_for_bench = distributed_symbolic
-            print(f"qubits_per_node: { {n: len(qs) for n, qs in distributed_lowered.qubits_per_node.items()} }", flush=True)
-            print(
-                "symbolic remote ops: "
-                f"remote_cz={symbolic_stats['remote_cz']} "
-                f"remote_swap={symbolic_stats['remote_swap']} "
-                f"ebits={symbolic_stats['ebits']}",
-                flush=True,
-            )
-            print(f"lowered ebits: {_lowered_ebits(distributed_lowered)}", flush=True)
-
+                distributed_symbolic = None
 
             print(f"         dqsim-sv run ...", end="", flush=True)
             sv_run = _bench_dqsim_sv_run(circuit_no_meas)
@@ -290,12 +273,13 @@ class TestPerformance:
             comp_run = _bench_dqsim_comp_run(distributed_lowered)
             print(f" {comp_run:.2f} ms", flush=True)
 
-            if distributed_symbolic_for_bench is not None:
+            if distributed_symbolic is not None:
                 print(f"         dqsim-comp run (lowered=False) ...", end="", flush=True)
-                raw_run = _bench_dqsim_comp_run(distributed_symbolic_for_bench)
+                raw_run = _bench_dqsim_comp_run(distributed_symbolic)
                 print(f" {raw_run:.2f} ms", flush=True)
             else:
                 raw_run = None
+            
 
             print(f"         bosonic (aer) sv run ...", end="", flush=True)
             aer_run = _bench_aer_sv_run(distributed_lowered.as_monolithic_circuit())
@@ -309,9 +293,9 @@ class TestPerformance:
             comp_shot_total = _bench_dqsim_comp_shots(distributed_lowered)
             print(f" {comp_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
-            if distributed_symbolic_for_bench is not None:
+            if distributed_symbolic is not None:
                 print(f"         dqsim-comp {SHOTS} shots (lowered=False) ...", end="", flush=True)
-                raw_shot_total = _bench_dqsim_comp_shots(distributed_symbolic_for_bench)
+                raw_shot_total = _bench_dqsim_comp_shots(distributed_symbolic)
                 print(f" {raw_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
             else:
                 raw_shot_total = None
@@ -323,7 +307,7 @@ class TestPerformance:
             rows.append((name, n, sv_run, comp_run, raw_run, aer_run, sv_shot_total, comp_shot_total, raw_shot_total, aer_shot_total))
             print(f"         done.", flush=True)
 
-        print(f"\n\nPerformance: dqsim vs Qiskit Aer  (SHOTS={SHOTS}, REPS={REPS}, median timing)\n")
+        print(f"\n\nPerformance: dqsim vs Qiskit Aer  (SHOTS={SHOTS}, single-call timing)\n")
         print(_HEADER)
         print(_SEP)
         for name, qb, sv_run, comp_run, raw_run, aer_run, sv_shot, comp_shot, raw_shot, aer_shot in rows:
