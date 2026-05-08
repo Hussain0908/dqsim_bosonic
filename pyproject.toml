@@ -38,11 +38,11 @@ url = "https://test.pypi.org/simple"
 explicit = true
 
 [tool.uv.sources]
-bosonic-model = { path = "../dqcomp/packages/bosonic-model", editable = true }
-bosonic-converters = { path = "../dqcomp/packages/bosonic-converters", editable = true }
-bosonic-sdk = { path = "../dqcomp/packages/bosonic-sdk", editable = true }
-qasmpi = { path = "../qasmpi", editable = true }
-bosonic-disqco = { path = "../DISQCO-fork", editable = true }
+bosonic-model = { index = "testpypi" }
+bosonic-converters = { index = "testpypi" }
+bosonic-sdk = { index = "testpypi" }
+qasmpi = { index = "testpypi" }
+bosonic-disqco = { index = "testpypi" }
 
 [tool.maturin]
 module-name = "dqsim._core"
