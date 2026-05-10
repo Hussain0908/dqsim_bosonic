@@ -182,25 +182,22 @@ css = [
 [[package]]
 name = "bosonic-converters"
 version = "0.1.1"
-source = { editable = "../dqcomp/packages/bosonic-converters" }
+source = { registry = "https://test.pypi.org/simple" }
 dependencies = [
     { name = "bosonic-model" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "qiskit" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "bosonic-model", editable = "../dqcomp/packages/bosonic-model" },
-    { name = "numpy", specifier = ">=1.26,<2.3.4" },
-    { name = "qiskit", specifier = ">=2.2.2" },
+sdist = { url = "https://test-files.pythonhosted.org/packages/e9/9c/a0f65e0696f9b53fd2c6b72e0fa1be2c8ccbf34b06973599cdd7fa733adf/bosonic_converters-0.1.1.tar.gz", hash = "sha256:005b36f6ef718e3bb65fe65b50d28ff2d91a66c3b5af8a2c361d7d3b2e3957cc", size = 5108, upload-time = "2026-05-05T04:27:00.726Z" }
+wheels = [
+    { url = "https://test-files.pythonhosted.org/packages/f1/8f/0f85c44f8d73189519e35c1869833efd24aab2f469468d8a429749f84d17/bosonic_converters-0.1.1-py3-none-any.whl", hash = "sha256:9e93d832cc3c1fea8f51cfd853170363219d2c4643d9ac49220bacdef58f370f", size = 5929, upload-time = "2026-05-05T04:26:59.525Z" },
 ]
 
 [[package]]
 name = "bosonic-disqco"
-version = "0.0.7"
-source = { editable = "../DISQCO-fork" }
+version = "0.0.8"
+source = { registry = "https://test.pypi.org/simple" }
 dependencies = [
     { name = "ipykernel" },
     { name = "jupyter-tikz" },
@@ -216,41 +213,28 @@ dependencies = [
     { name = "qiskit-qasm3-import" },
     { name = "tqdm" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "ipykernel" },
-    { name = "jupyter-tikz" },
-    { name = "matplotlib" },
-    { name = "networkx" },
-    { name = "numpy", specifier = ">=1.26,<2.3.4" },
-    { name = "pylatexenc" },
-    { name = "pytest" },
-    { name = "qiskit", specifier = ">=2.2.2" },
-    { name = "qiskit-aer", specifier = ">=0.14.0" },
-    { name = "qiskit-qasm3-import", specifier = ">=0.6.0" },
-    { name = "tqdm" },
+sdist = { url = "https://test-files.pythonhosted.org/packages/d2/2e/770323ad5b7437b8a59cc5cf2cdaebd83dfd577a013e3e14226dc241a6f2/bosonic_disqco-0.0.8.tar.gz", hash = "sha256:ef2a77232276dec633d6e484cd4c2c432f5997dfca1dafedb8a11545455f187c", size = 142762, upload-time = "2026-05-01T07:26:42.005Z" }
+wheels = [
+    { url = "https://test-files.pythonhosted.org/packages/da/34/f2070a87570f64ba5e16108bae666fea31b2448a9dd2725d93ded3202afb/bosonic_disqco-0.0.8-py3-none-any.whl", hash = "sha256:467e12f2f3b95de9c5d1d5464831689bb86b69e440a180686de9b668691566f9", size = 163742, upload-time = "2026-05-01T07:26:40.356Z" },
 ]
 
 [[package]]
 name = "bosonic-model"
 version = "0.1.2"
-source = { editable = "../dqcomp/packages/bosonic-model" }
+source = { registry = "https://test.pypi.org/simple" }
 dependencies = [
     { name = "lark" },
     { name = "pydantic" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "lark", specifier = ">=1.2.2" },
-    { name = "pydantic", specifier = ">=2.7.0" },
+sdist = { url = "https://test-files.pythonhosted.org/packages/ef/ec/ee5d94190655efe816e8b09e046301139e71d45b7f1290bdd4b4bc5dd11d/bosonic_model-0.1.2.tar.gz", hash = "sha256:fecea15e99d93cfaaa614a3bda5e09318a103e7c031f0fcd917a6c4c9fdb6f88", size = 10164, upload-time = "2026-05-05T04:14:12.087Z" }
+wheels = [
+    { url = "https://test-files.pythonhosted.org/packages/0b/ca/ac67a020f9dae54fc55673f2271df542635b1328ec308d565e2474e6d957/bosonic_model-0.1.2-py3-none-any.whl", hash = "sha256:294c8c0aadcaf3eeec25b063d0483e2973367f30c92b085b4248a05979e7911c", size = 12486, upload-time = "2026-05-05T04:14:10.789Z" },
 ]
 
 [[package]]
 name = "bosonic-sdk"
 version = "0.1.6"
-source = { editable = "../dqcomp/packages/bosonic-sdk" }
+source = { registry = "https://test.pypi.org/simple" }
 dependencies = [
     { name = "bosonic-converters" },
     { name = "bosonic-model" },
@@ -273,34 +257,10 @@ dependencies = [
     { name = "qiskit-qasm3-import" },
     { name = "rustworkx" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "bosonic-converters", editable = "../dqcomp/packages/bosonic-converters" },
-    { name = "bosonic-disqco", marker = "extra == 'disqco'", specifier = ">=0.0.7,<0.1.0", index = "https://test.pypi.org/simple" },
-    { name = "bosonic-model", editable = "../dqcomp/packages/bosonic-model" },
-    { name = "bosonic-pytket-dqc", marker = "extra == 'pytket-dqc'", specifier = ">=0.0.1,<0.1.0", index = "https://test.pypi.org/simple" },
-    { name = "cirq-core", specifier = ">=1.3" },
-    { name = "graphviz", specifier = ">=0.21" },
-    { name = "hypergraph-partitioner", marker = "extra == 'hypergraph'", specifier = ">=0.1.0,<0.2.0", index = "https://test.pypi.org/simple" },
-    { name = "ipython", specifier = ">=8.12.0" },
-    { name = "jupyter", specifier = ">=1.1.1" },
-    { name = "matplotlib", specifier = ">=3.8.0" },
-    { name = "numpy", specifier = ">=1.26,<2.3.4" },
-    { name = "pydantic", specifier = ">=2.7.0" },
-    { name = "pylatexenc", specifier = ">=2.10" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.3" },
-    { name = "qasmpi", specifier = ">=0.1.0,<0.2.0", index = "https://test.pypi.org/simple" },
-    { name = "qiskit", specifier = ">=2.2.2" },
-    { name = "qiskit-aer", specifier = ">=0.14.0" },
-    { name = "qiskit-ibm-runtime", specifier = ">=0.45.1" },
-    { name = "qiskit-ionq", specifier = ">=1.0.2" },
-    { name = "qiskit-qasm3-import", specifier = ">=0.6.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.5" },
-    { name = "rustworkx", specifier = ">=0.17.1" },
-    { name = "ty", marker = "extra == 'dev'" },
+sdist = { url = "https://test-files.pythonhosted.org/packages/3c/67/c36639a756bd5b49c9052d98a166b350cd77b5485922c78035b3b7c44a2c/bosonic_sdk-0.1.6.tar.gz", hash = "sha256:f15d3b95d968aabaabbee38e7e67f842a126d9d3ceba7b79074e7989daf1f926", size = 12237, upload-time = "2026-05-06T04:16:23.38Z" }
+wheels = [
+    { url = "https://test-files.pythonhosted.org/packages/1e/cb/ec278fdebdcf7276e25968d8668eb607fdec1acef504dfad183aff580f51/bosonic_sdk-0.1.6-py3-none-any.whl", hash = "sha256:bfe30aec01a8ff73a7d8b5881616b7c02558dd9e20d1dd9e9784b102ed0b4702", size = 17385, upload-time = "2026-05-06T04:16:21.517Z" },
 ]
-provides-extras = ["pytket-dqc", "hypergraph", "disqco", "dev"]
 
 [[package]]
 name = "certifi"
@@ -872,15 +832,15 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "bosonic-converters", editable = "../dqcomp/packages/bosonic-converters" },
-    { name = "bosonic-converters", marker = "extra == 'test'", editable = "../dqcomp/packages/bosonic-converters" },
-    { name = "bosonic-disqco", marker = "extra == 'test'", editable = "../DISQCO-fork" },
-    { name = "bosonic-model", editable = "../dqcomp/packages/bosonic-model" },
-    { name = "bosonic-model", marker = "extra == 'test'", editable = "../dqcomp/packages/bosonic-model" },
-    { name = "bosonic-sdk", marker = "extra == 'test'", editable = "../dqcomp/packages/bosonic-sdk" },
+    { name = "bosonic-converters", specifier = ">=0.1.0,<0.2.0", index = "https://test.pypi.org/simple" },
+    { name = "bosonic-converters", marker = "extra == 'test'", specifier = ">=0.1.0,<0.2.0", index = "https://test.pypi.org/simple" },
+    { name = "bosonic-disqco", marker = "extra == 'test'", specifier = ">=0.0.7,<0.1.0", index = "https://test.pypi.org/simple" },
+    { name = "bosonic-model", specifier = ">=0.1.1,<0.2.0", index = "https://test.pypi.org/simple" },
+    { name = "bosonic-model", marker = "extra == 'test'", specifier = ">=0.1.1,<0.2.0", index = "https://test.pypi.org/simple" },
+    { name = "bosonic-sdk", marker = "extra == 'test'", specifier = ">=0.1.0,<0.2.0", index = "https://test.pypi.org/simple" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
-    { name = "qasmpi", marker = "extra == 'test'", editable = "../qasmpi" },
+    { name = "qasmpi", marker = "extra == 'test'", specifier = ">=0.1.1", index = "https://test.pypi.org/simple" },
     { name = "qiskit-aer", marker = "extra == 'test'", specifier = ">=0.16" },
 ]
 provides-extras = ["test"]
@@ -3088,7 +3048,11 @@ wheels = [
 [[package]]
 name = "qasmpi"
 version = "0.1.1"
-source = { editable = "../qasmpi" }
+source = { registry = "https://test.pypi.org/simple" }
+sdist = { url = "https://test-files.pythonhosted.org/packages/83/40/ee89aea23d77b05d38e277d6f0b62efce35e1aec7bc75cf66334476fb4f2/qasmpi-0.1.1.tar.gz", hash = "sha256:b71f47c876c7c7054315435628a037f3e8e45ae20d2e0f51f3d9b0f162b60ba8", size = 7978, upload-time = "2026-04-27T05:54:27.465Z" }
+wheels = [
+    { url = "https://test-files.pythonhosted.org/packages/c5/f4/3761642ea3af0c31aa4c04259255e549c6a697ad3404a3ccd8e039f1f014/qasmpi-0.1.1-py3-none-any.whl", hash = "sha256:6969b4792daf2fe7e4afd8836c5cf5a95ee0e744d4f59f49f093aeb0e172e6d8", size = 5423, upload-time = "2026-04-27T05:54:26.475Z" },
+]
 
 [[package]]
 name = "qiskit"
