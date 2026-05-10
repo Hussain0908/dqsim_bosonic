@@ -32,3 +32,21 @@ jobs:
           enable-cache: true
       - name: Run tests
         run: make test
+
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+      - name: Install make
+        run: choco install make -y
+        shell: pwsh
+      - name: Run tests
+        run: make test
+        shell: bash
