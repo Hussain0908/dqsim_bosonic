@@ -50,3 +50,5 @@ jobs:
       - name: Run tests
         run: make test
         shell: bash
+        env:
+          PYTHONUTF8: "1"
