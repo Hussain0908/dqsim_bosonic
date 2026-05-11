@@ -6,6 +6,7 @@ type C = Complex64;
 
 #[derive(Deserialize, Clone)]
 pub struct Register {
+    #[allow(dead_code)]
     pub name: String,
     pub size: usize,
     pub base: usize,
@@ -119,7 +120,7 @@ pub enum Instruction {
     // -----------------------------------------------------------------------
     // Generic / cross-node
     // -----------------------------------------------------------------------
-    Gate { name: String, params: Vec<f64>, qubits: Vec<usize> },
+    Gate { name: String, #[allow(dead_code)] params: Vec<f64>, qubits: Vec<usize> },
     // -----------------------------------------------------------------------
     // Measurement and classical control
     // -----------------------------------------------------------------------
@@ -130,7 +131,7 @@ pub enum Instruction {
     // No-ops
     // -----------------------------------------------------------------------
     Barrier,
-    Classical  { name: String },
+    Classical  { #[allow(dead_code)] name: String },
 }
 
 // ---------------------------------------------------------------------------

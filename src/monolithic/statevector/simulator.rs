@@ -229,14 +229,14 @@ impl StatevectorSimulator {
                     Ok(format_cbits(&cbits, num_cbits))
                 })
                 .try_fold(
-                    || HashMap::new(),
+                    HashMap::new,
                     |mut m, r| { let k = r?; *m.entry(k).or_insert(0) += 1; Ok(m) },
                 )
                 .try_reduce(
-                    || HashMap::new(),
+                    HashMap::new,
                     |mut a, b| { for (k, v) in b { *a.entry(k).or_insert(0) += v; } Ok(a) },
                 )
-        }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+        }).map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         let d = PyDict::new_bound(py);
         for (k, v) in &counts {
@@ -308,7 +308,7 @@ impl StatevectorSimulator {
 // ---------------------------------------------------------------------------
 
 fn run_instruction(
-    state: &mut Vec<C>,
+    state: &mut [C],
     inst: &Instruction,
     n: usize,
     cbits: &mut HashMap<usize, i32>,
@@ -560,7 +560,7 @@ fn run_instruction(
 // ---------------------------------------------------------------------------
 
 fn run_instruction_par(
-    state: &mut Vec<C>,
+    state: &mut [C],
     inst: &Instruction,
     n: usize,
     cbits: &mut HashMap<usize, i32>,
@@ -792,7 +792,7 @@ fn run_instruction_par(
 // ---------------------------------------------------------------------------
 
 fn run_fused_par(
-    state: &mut Vec<C>,
+    state: &mut [C],
     fi: &FusedInstruction<'_>,
     n: usize,
     cbits: &mut HashMap<usize, i32>,
@@ -813,7 +813,7 @@ fn run_fused_par(
 
 #[inline]
 fn do_oq(
-    state: &mut Vec<C>,
+    state: &mut [C],
     u: &[[C; 2]; 2],
     target: usize,
     n: usize,
@@ -832,7 +832,7 @@ fn do_oq(
 
 #[inline]
 fn do_nq(
-    state: &mut Vec<C>,
+    state: &mut [C],
     u: &[Vec<C>],
     qubits: &[usize],
     n: usize,
@@ -851,7 +851,7 @@ fn do_nq(
 
 #[inline]
 fn do_mq(
-    state: &mut Vec<C>,
+    state: &mut [C],
     qubit: usize,
     n: usize,
     rng: &mut impl Rng,

@@ -36,7 +36,7 @@ pub(super) fn merge_blocks(a: Block, b: Block) -> Block {
     let dim = 1 << n;
     let mut state = vec![C::new(0.0, 0.0); dim];
 
-    for i in 0..dim {
+    for (i, amp) in state.iter_mut().enumerate() {
         let mut a_local = 0usize;
         for (bit, &aq) in a.qubits.iter().enumerate() {
             let merged_bit = qubits.iter().position(|&q| q == aq).unwrap();
@@ -51,7 +51,7 @@ pub(super) fn merge_blocks(a: Block, b: Block) -> Block {
                 b_local |= 1 << bit;
             }
         }
-        state[i] = a.state[a_local] * b.state[b_local];
+        *amp = a.state[a_local] * b.state[b_local];
     }
 
     Block { state, qubits }
@@ -117,13 +117,11 @@ impl BlockPool {
 
     pub(super) fn merge_all(mut self) -> Block {
         let mut result: Option<Block> = None;
-        for block_opt in self.blocks.drain(..) {
-            if let Some(block) = block_opt {
-                result = Some(match result {
-                    None => block,
-                    Some(acc) => merge_blocks(acc, block),
-                });
-            }
+        for block in self.blocks.drain(..).flatten() {
+            result = Some(match result {
+                None => block,
+                Some(acc) => merge_blocks(acc, block),
+            });
         }
         result.unwrap_or_else(|| Block::new(vec![]))
     }

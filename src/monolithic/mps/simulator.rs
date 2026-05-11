@@ -76,10 +76,10 @@ impl Mps {
         let mut new = Tensor::zero(old.left, old.right);
         for left in 0..old.left {
             for right in 0..old.right {
-                for out in 0..2 {
+                for (out, row) in mat.iter().enumerate() {
                     let mut acc = C::new(0.0, 0.0);
-                    for input in 0..2 {
-                        acc += mat[out][input] * old.get(left, input, right);
+                    for (input, gate_element) in row.iter().enumerate() {
+                        acc += *gate_element * old.get(left, input, right);
                     }
                     new.set(left, out, right, acc);
                 }
@@ -224,9 +224,9 @@ impl Mps {
             for (qubit, tensor) in self.tensors.iter().enumerate() {
                 let bit = (basis >> qubit) & 1;
                 let mut next = vec![C::new(0.0, 0.0); tensor.right];
-                for left in 0..tensor.left {
-                    for right in 0..tensor.right {
-                        next[right] += work[left] * tensor.get(left, bit, right);
+                for (left, left_amp) in work.iter().enumerate().take(tensor.left) {
+                    for (right, next_amp) in next.iter_mut().enumerate().take(tensor.right) {
+                        *next_amp += *left_amp * tensor.get(left, bit, right);
                     }
                 }
                 work = next;

@@ -1,3 +1,5 @@
+#![allow(clippy::useless_conversion)]
+
 mod codecs;
 mod distributed;
 mod engine;
