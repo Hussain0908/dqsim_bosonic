@@ -1,6 +1,7 @@
 from dqsim._core import (
     PBlockResult,
     PBlockSimulator,
+    MpsSimulator,
     SimulationProfile,
     SimulationResult,
     StatevectorSimulator,
@@ -12,6 +13,7 @@ from dqsim._core import (
 
 __all__ = [
     "StatevectorSimulator",
+    "MpsSimulator",
     "SimulationResult",
     "SimulationProfile",
     "PBlockSimulator",

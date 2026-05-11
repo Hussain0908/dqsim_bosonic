@@ -1,3 +1,4 @@
+mod codecs;
 mod distributed;
 mod engine;
 mod gates;
@@ -11,6 +12,7 @@ use pyo3::wrap_pyfunction;
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<monolithic::statevector::StatevectorSimulator>()?;
+    m.add_class::<monolithic::mps::MpsSimulator>()?;
     m.add_class::<monolithic::statevector::SimulationResult>()?;
     m.add_class::<monolithic::statevector::SimulationProfile>()?;
     m.add_class::<distributed::pblock::PBlockSimulator>()?;

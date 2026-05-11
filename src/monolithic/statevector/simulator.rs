@@ -84,6 +84,22 @@ pub struct SimulationResult {
     prof: Option<Py<SimulationProfile>>,
 }
 
+impl SimulationResult {
+    pub(crate) fn new(
+        sv: Vec<C>,
+        num_qubits: usize,
+        cbits: HashMap<usize, i32>,
+        prof: Option<Py<SimulationProfile>>,
+    ) -> Self {
+        Self {
+            sv,
+            num_qubits,
+            cbits,
+            prof,
+        }
+    }
+}
+
 #[pymethods]
 impl SimulationResult {
     /// Raw complex amplitudes as a NumPy array of shape (2^n,).
@@ -283,12 +299,7 @@ impl StatevectorSimulator {
             })
             .transpose()?;
 
-        Ok(SimulationResult {
-            sv: state,
-            num_qubits: n,
-            cbits,
-            prof,
-        })
+        Ok(SimulationResult::new(state, n, cbits, prof))
     }
 }
 
