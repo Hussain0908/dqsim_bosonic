@@ -257,6 +257,7 @@ pub fn phi_plus() -> Mat4 {
     ]
 }
 
+#[allow(dead_code)]
 pub const NONLOCAL_CZ: Mat4 = {
     let o = r(0.0); let i = r(1.0); let n = r(-1.0);
     [[i,o,o,o],[o,i,o,o],[o,o,i,o],[o,o,o,n]]
@@ -268,16 +269,16 @@ pub const NONLOCAL_CZ: Mat4 = {
 
 fn identity8() -> Mat8 {
     let mut m = [[r(0.0); 8]; 8];
-    for i in 0..8 { m[i][i] = r(1.0); }
+    for (i, row) in m.iter_mut().enumerate() { row[i] = r(1.0); }
     m
 }
 fn identity16() -> Mat16 {
     let mut m = [[r(0.0); 16]; 16];
-    for i in 0..16 { m[i][i] = r(1.0); }
+    for (i, row) in m.iter_mut().enumerate() { row[i] = r(1.0); }
     m
 }
 fn identity32() -> Mat32 {
     let mut m = [[r(0.0); 32]; 32];
-    for i in 0..32 { m[i][i] = r(1.0); }
+    for (i, row) in m.iter_mut().enumerate() { row[i] = r(1.0); }
     m
 }

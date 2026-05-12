@@ -22,7 +22,7 @@ const MAX_DIM: usize = 32;
 // ---------------------------------------------------------------------------
 
 pub fn apply_one_qubit(
-    state: &mut Vec<C>,
+    state: &mut [C],
     u: &[[C; 2]; 2],
     target: usize,
     n: usize,
@@ -88,14 +88,12 @@ pub fn apply_one_qubit(
     } else {
         let mut i = 0;
         while i < dim {
-            if (i & half) == 0 {
-                if inclusion_mask == 0 || (i & inclusion_mask) == desired_mask {
-                    let j = i | half;
-                    let a = state[i];
-                    let b = state[j];
-                    state[i] = u00 * a + u01 * b;
-                    state[j] = u10 * a + u11 * b;
-                }
+            if (i & half) == 0 && (inclusion_mask == 0 || (i & inclusion_mask) == desired_mask) {
+                let j = i | half;
+                let a = state[i];
+                let b = state[j];
+                state[i] = u00 * a + u01 * b;
+                state[j] = u10 * a + u11 * b;
             }
             i += 1;
         }
@@ -108,7 +106,7 @@ pub fn apply_one_qubit(
 // qubits[0] = MSB of the gate's index space, qubits[k-1] = LSB.
 // ---------------------------------------------------------------------------
 
-pub fn apply_n_qubit(state: &mut Vec<C>, u: &[Vec<C>], qubits: &[usize], n: usize) {
+pub fn apply_n_qubit(state: &mut [C], u: &[Vec<C>], qubits: &[usize], n: usize) {
     let k = qubits.len();
     let dim = 1 << k;
     let n_states = 1 << n;
@@ -116,14 +114,14 @@ pub fn apply_n_qubit(state: &mut Vec<C>, u: &[Vec<C>], qubits: &[usize], n: usiz
 
     // Pre-compute target-bit offsets once — the same for every base index.
     let mut offsets = [0usize; MAX_DIM];
-    for j in 0..dim {
+    for (j, offset_slot) in offsets.iter_mut().enumerate().take(dim) {
         let mut offset = 0usize;
         for (bit, &q) in qubits.iter().enumerate() {
             if (j >> (k - 1 - bit)) & 1 == 1 {
                 offset |= 1 << q;
             }
         }
-        offsets[j] = offset;
+        *offset_slot = offset;
     }
 
     if n >= PAR_THRESHOLD {
@@ -192,7 +190,7 @@ pub fn apply_n_qubit(state: &mut Vec<C>, u: &[Vec<C>], qubits: &[usize], n: usiz
 // any scatter/filter overhead and with fully contiguous memory access.
 // ---------------------------------------------------------------------------
 
-pub fn measure_qubit<R: Rng>(state: &mut Vec<C>, qubit: usize, n: usize, rng: &mut R) -> u8 {
+pub fn measure_qubit<R: Rng>(state: &mut [C], qubit: usize, n: usize, rng: &mut R) -> u8 {
     let n_states = 1 << n;
     let bit = 1 << qubit;
 
@@ -265,7 +263,7 @@ pub fn measure_qubit<R: Rng>(state: &mut Vec<C>, qubit: usize, n: usize, rng: &m
 
 /// Sequential apply_one_qubit — always single-threaded, for use inside parallel shot loops.
 pub fn apply_one_qubit_seq(
-    state: &mut Vec<C>,
+    state: &mut [C],
     u: &[[C; 2]; 2],
     target: usize,
     n: usize,
@@ -282,34 +280,32 @@ pub fn apply_one_qubit_seq(
     let u11 = u[1][1];
     let mut i = 0;
     while i < dim {
-        if (i & half) == 0 {
-            if inclusion_mask == 0 || (i & inclusion_mask) == desired_mask {
-                let j = i | half;
-                let a = state[i];
-                let b = state[j];
-                state[i] = u00 * a + u01 * b;
-                state[j] = u10 * a + u11 * b;
-            }
+        if (i & half) == 0 && (inclusion_mask == 0 || (i & inclusion_mask) == desired_mask) {
+            let j = i | half;
+            let a = state[i];
+            let b = state[j];
+            state[i] = u00 * a + u01 * b;
+            state[j] = u10 * a + u11 * b;
         }
         i += 1;
     }
 }
 
 /// Sequential apply_n_qubit — always single-threaded.
-pub fn apply_n_qubit_seq(state: &mut Vec<C>, u: &[Vec<C>], qubits: &[usize], n: usize) {
+pub fn apply_n_qubit_seq(state: &mut [C], u: &[Vec<C>], qubits: &[usize], n: usize) {
     let k = qubits.len();
     let dim = 1 << k;
     let n_states = 1 << n;
     let mask: usize = qubits.iter().fold(0, |m, &q| m | (1 << q));
     let mut offsets = [0usize; MAX_DIM];
-    for j in 0..dim {
+    for (j, offset_slot) in offsets.iter_mut().enumerate().take(dim) {
         let mut offset = 0usize;
         for (bit, &q) in qubits.iter().enumerate() {
             if (j >> (k - 1 - bit)) & 1 == 1 {
                 offset |= 1 << q;
             }
         }
-        offsets[j] = offset;
+        *offset_slot = offset;
     }
     let mut v = vec![C::new(0.0, 0.0); dim];
     let mut w = vec![C::new(0.0, 0.0); dim];
@@ -335,7 +331,7 @@ pub fn apply_n_qubit_seq(state: &mut Vec<C>, u: &[Vec<C>], qubits: &[usize], n: 
 }
 
 /// Sequential measure_qubit — always single-threaded.
-pub fn measure_qubit_seq<R: Rng>(state: &mut Vec<C>, qubit: usize, n: usize, rng: &mut R) -> u8 {
+pub fn measure_qubit_seq<R: Rng>(state: &mut [C], qubit: usize, n: usize, rng: &mut R) -> u8 {
     let n_states = 1 << n;
     let bit = 1 << qubit;
     let p1: f64 = (0..n_states)
@@ -377,14 +373,14 @@ pub fn marginal_probs(state: &[C], n: usize, qubits: &[usize]) -> Vec<f64> {
     let mask: usize = qubits.iter().fold(0, |m, &q| m | (1 << q));
     let mut probs = vec![0.0f64; dim];
 
-    for j in 0..dim {
+    for (j, prob) in probs.iter_mut().enumerate() {
         let mut desired = 0usize;
         for (bit, &q) in qubits.iter().enumerate() {
             if (j >> (k - 1 - bit)) & 1 == 1 {
                 desired |= 1 << q;
             }
         }
-        probs[j] = (0..n_states)
+        *prob = (0..n_states)
             .filter(|&i| (i & mask) == desired)
             .map(|i| state[i].norm_sqr())
             .sum();

@@ -1,46 +1,37 @@
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
+use crate::codecs::{
+    parse_distributed_mode, parse_monolithic_mode, parse_mps_options, reject_monolithic_options,
+    DistributedSimulationMode, MonolithicSimulationMode,
+};
 use crate::distributed::pblock::PBlockSimulator;
+use crate::monolithic::mps::MpsSimulator;
 use crate::monolithic::statevector::StatevectorSimulator;
 
-enum MonolithicSimulationMode {
-    StateVector,
-}
-
-enum DistributedSimulationMode {
-    PBlock,
-}
-
-fn parse_monolithic_mode(mode: &str) -> PyResult<MonolithicSimulationMode> {
-    match mode.trim().to_ascii_lowercase().replace('-', "_").as_str() {
-        "state_vector" => Ok(MonolithicSimulationMode::StateVector),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "Unsupported monolithic simulation mode {other:?}; expected 'state_vector'"
-        ))),
-    }
-}
-
-fn parse_distributed_mode(mode: &str) -> PyResult<DistributedSimulationMode> {
-    match mode.trim().to_ascii_lowercase().replace('-', "_").as_str() {
-        "p_block" => Ok(DistributedSimulationMode::PBlock),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "Unsupported distributed simulation mode {other:?}; expected 'p_block'"
-        ))),
-    }
-}
-
 #[pyfunction]
-#[pyo3(signature = (circuit, mode="state_vector", seed=None, profile=false))]
+#[pyo3(signature = (circuit, mode="state_vector", seed=None, profile=false, **options))]
 pub fn simulate_monolithic(
     py: Python,
     circuit: &Bound<PyAny>, // todo: tighten this
     mode: &str,
     seed: Option<u64>,
     profile: bool,
+    options: Option<&Bound<PyDict>>,
 ) -> PyResult<PyObject> {
     match parse_monolithic_mode(mode)? {
         MonolithicSimulationMode::StateVector => {
+            reject_monolithic_options(options, mode)?;
             let sim = StatevectorSimulator::new(seed, profile);
+            Ok(sim.simulate(py, circuit)?.into_py(py))
+        }
+        MonolithicSimulationMode::Mps => {
+            let options = parse_mps_options(options)?;
+            let sim = MpsSimulator::new(
+                seed,
+                options.max_bond_dimension,
+                options.truncation_threshold,
+            );
             Ok(sim.simulate(py, circuit)?.into_py(py))
         }
     }
@@ -63,17 +54,28 @@ pub fn simulate_distributed(
 }
 
 #[pyfunction]
-#[pyo3(signature = (circuit, mode="state_vector", shots=1000, seed=None))]
+#[pyo3(signature = (circuit, mode="state_vector", shots=1000, seed=None, **options))]
 pub fn simulate_monolithic_shots(
     py: Python,
     circuit: &Bound<PyAny>, // todo: tighten this
     mode: &str,
     shots: usize,
     seed: Option<u64>,
+    options: Option<&Bound<PyDict>>,
 ) -> PyResult<PyObject> {
     match parse_monolithic_mode(mode)? {
         MonolithicSimulationMode::StateVector => {
+            reject_monolithic_options(options, mode)?;
             let sim = StatevectorSimulator::new(seed, false);
+            sim.simulate_shots(py, circuit, shots)
+        }
+        MonolithicSimulationMode::Mps => {
+            let options = parse_mps_options(options)?;
+            let sim = MpsSimulator::new(
+                seed,
+                options.max_bond_dimension,
+                options.truncation_threshold,
+            );
             sim.simulate_shots(py, circuit, shots)
         }
     }

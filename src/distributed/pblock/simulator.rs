@@ -203,14 +203,14 @@ impl PBlockSimulator {
                     Ok(format_cbits(&cbits, num_cbits))
                 })
                 .try_fold(
-                    || HashMap::new(),
+                    HashMap::new,
                     |mut m, r| { let k = r?; *m.entry(k).or_insert(0) += 1; Ok(m) },
                 )
                 .try_reduce(
-                    || HashMap::new(),
+                    HashMap::new,
                     |mut a, b| { for (k, v) in b { *a.entry(k).or_insert(0) += v; } Ok(a) },
                 )
-        }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))?;
+        }).map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         let d = PyDict::new_bound(py);
         for (k, v) in &counts { d.set_item(k, v)?; }
@@ -345,7 +345,8 @@ impl PBlockSimulator {
                 // SAFETY: each iteration accesses a unique block_idx, so no aliasing.
                 // We split `per_cbits` entries and pair each with a unique &mut Block.
                 let raw = pool.blocks.as_mut_ptr();
-                let mut tasks: Vec<(&mut Option<Block>, &mut HashMap<usize, i32>, &Instruction, u64)> =
+                type EpochTask<'a> = (&'a mut Option<Block>, &'a mut HashMap<usize, i32>, &'a Instruction, u64);
+                let mut tasks: Vec<EpochTask<'_>> =
                     per_cbits.iter_mut().enumerate().map(|(k, local_cbits)| {
                         let (entry_idx, block_idx) = epoch[k];
                         let gate_seed = gate_seeds[k];

@@ -1,4 +1,4 @@
-.PHONY: build publish test perf
+.PHONY: build publish test perf lint check suite
 
 DIST_DIR := dist
 REPOSITORY ?= testpypi
@@ -13,6 +13,15 @@ endif
 
 test:
 	uv run --python 3.11 --extra test pytest tests/ -v -s
+
+lint:
+	cargo clippy --all-targets
+
+check:
+	cargo check
+
+suite:
+	$(MAKE) test && $(MAKE) lint && $(MAKE) check
 
 perf:
 	uv run --python 3.11 maturin develop --release
