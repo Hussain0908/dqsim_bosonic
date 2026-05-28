@@ -1,6 +1,6 @@
 [project]
 name = "dqsim"
-version = "0.1.1"
+version = "0.1.2"
 description = "Native Rust statevector simulator for distributed quantum circuits"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -46,3 +46,4 @@ bosonic-disqco = { index = "testpypi" }
 
 [tool.maturin]
 module-name = "dqsim._core"
+python-tag = "abi3"

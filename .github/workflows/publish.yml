@@ -1,0 +1,57 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build wheels — ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest       # Apple Silicon (aarch64)
+          - os: macos-13           # Intel Mac (x86_64)
+          - os: ubuntu-latest      # Linux x86_64 via manylinux
+          - os: windows-latest     # Windows x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist
+          manylinux: auto   # uses manylinux2014 Docker on Linux automatically
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist/*.whl
+
+  publish:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish
+        uses: PyO3/maturin-action@v1
+        with:
+          command: upload
+          args: --repository testpypi --skip-existing dist/*.whl
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.TESTPYPI_TOKEN }}
