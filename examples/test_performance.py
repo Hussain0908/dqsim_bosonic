@@ -13,6 +13,7 @@ Two timing axes are reported for each circuit:
   per-shot (µs)
     dqsim-sv   : (simulate() + result.counts(SHOTS)) / SHOTS
     dqsim-pblock : (distribute() + simulate() + sample SHOTS) / SHOTS
+    dqsim-stab   : StabilizerSimulator.simulate_shots() / SHOTS
     aer        : AerSimulator().run(qc_with_meas, shots=SHOTS) / SHOTS
 
 All timings are from a single call.
@@ -31,7 +32,8 @@ from bosonic_sdk.distributor.distributors.hypergraph_distributor import Hypergra
 from bosonic_sdk.distributor.distributors.disqco_distributor import DisqcoDistributor
 from bosonic_sdk.simulation.simulator import Simulator as BosonicSimulator
 
-from dqsim import PBlockSimulator, StatevectorSimulator
+# Import the StabilizerSimulator class to support parallelized check matrix stabilizer simulation benchmarking
+from dqsim import PBlockSimulator, StatevectorSimulator, StabilizerSimulator
 
 # ---------------------------------------------------------------------------
 # Config
@@ -111,6 +113,14 @@ def _bench_dqsim_sv_shots(circuit) -> float:
     sim = StatevectorSimulator(seed=SEED)
     return _elapsed_ms(lambda: sim.simulate_shots(circuit, shots=SHOTS))
 
+# Benchmark function to measure the execution time of multiple shots using the StabilizerSimulator backend
+def _bench_dqsim_stabilizer_shots(circuit) -> float:
+    """Time (ms) for StabilizerSImulator.simulate_shots() - parallelized check matrix."""
+    # Initialize the Clifford check matrix stabilizer simulation instance with a predefined seed
+    sim = StabilizerSimulator(seed=SEED)
+    # Execute and time the requested number of shot repetitions for Clifford-compliant circuits
+    return _elapsed_ms(lambda: sim.simulate_shots(circuit, shots=SHOTS))
+
 
 def _bench_dqsim_pblock_run(distributed) -> float:
     """Time (ms) for PBlockSimulator.simulate() on a pre-distributed circuit."""
@@ -163,11 +173,12 @@ _COL_W = {
     "pblock_speedup":   13,
 }
 
+# Define the table layout string, including headers for stabilizer shot performance and speedup metrics
 _HEADER = (
     f"{'Circuit':<16}  {'Qb':>4}  "
     f"{'sv run(ms)':>12}  {'pblock(L=T) run':>16}  {'pblock(L=F) run':>16}  {'aer run(ms)':>11}  "
-    f"{'sv shot(µs)':>12}  {'pblock(L=T) shot':>17}  {'pblock(L=F) shot':>17}  {'aer shot(µs)':>12}  "
-    f"{'sv speedup':>11}  {'L=T speedup':>12}  {'L=F speedup':>12}"
+    f"{'sv shot(µs)':>12}  {'pblock(L=T) shot':>17}  {'pblock(L=F) shot':>17}  {'stab shot(µs)':>14}  {'aer shot(µs)':>12}  "
+    f"{'sv speed':>9}  {'L=T speed':>10}  {'stab speed':>12}"
 )
 
 _SEP = "-" * len(_HEADER)
@@ -190,18 +201,23 @@ def _row(
     sv_shot_total: float,
     pblock_shot_total: float,
     raw_shot_total: float | None,
+    stabilizer_shot_total: float | None,  # Total accumulated runtime for the stabilizer simulation trajectory
     aer_shot_total: float,
 ) -> str:
     sv_shot_us = sv_shot_total / SHOTS * 1_000
     pblock_shot_us = pblock_shot_total / SHOTS * 1_000
     raw_shot_us = raw_shot_total / SHOTS * 1_000 if raw_shot_total is not None else None
+    # Compute the average time per individual shot in microseconds using stabilizer methods
+    stabilizer_shot_us = stabilizer_shot_total / SHOTS * 1_000 if stabilizer_shot_total is not None else None
     aer_shot_us = aer_shot_total / SHOTS * 1_000
 
     return (
         f"{name:<16}  {qb:>4}  "
         f"{sv_run:>12.2f}  {pblock_run:>16.2f}  {_fmt_ms(raw_run, 16)}  {aer_run:>11.2f}  "
-        f"{sv_shot_us:>12.2f}  {pblock_shot_us:>17.2f}  {_fmt_ms(raw_shot_us, 17)}  {aer_shot_us:>12.2f}  "
-        f"{aer_run / sv_run:>11.1f}x  {aer_run / pblock_run:>12.1f}x  {_fmt_speedup(aer_run, raw_run, 12)}"
+        # Print formatted simulation times per shot, injecting the stabilizer simulator's results
+        f"{sv_shot_us:>12.2f}  {pblock_shot_us:>17.2f}  {_fmt_ms(raw_shot_us, 17)} {_fmt_ms(stabilizer_shot_us, 14)} {aer_shot_us:>12.2f}  "
+        # Include calculated relative speedups of the parallelized stabilizer check matrix framework vs Aer
+        f"{aer_run / sv_run:>11.1f}x  {aer_run / pblock_run:>12.1f}x {_fmt_speedup(aer_shot_total, stabilizer_shot_total, 12)} {_fmt_speedup(aer_run, raw_run, 12)}"
     )
 
 
@@ -212,6 +228,7 @@ def _row(
 class TestPerformance:
     def test_benchmark_table(self) -> None:
         rows = []
+        #dist = HypergraphDistributor()
         dist = DisqcoDistributor()
 
         total = len(_BENCH_CIRCUITS)
@@ -277,24 +294,38 @@ class TestPerformance:
             else:
                 raw_shot_total = None
 
+            # Profile the multi-shot performance using the Clifford stabilizer simulator approach
+            print(f"         dqsim-stabilizer {SHOTS} shots ...", end="", flush=True)
+            try:
+                # Execute the stabilizer benchmarking routine for the current circuit 
+                stabilizer_shot_total = _bench_dqsim_stabilizer_shots(circuit)
+                print(f" {stabilizer_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
+            except Exception:
+                # Capture errors if non-Clifford operations are detected, as they are unsupported by stabilizer methods
+                print(" N/A (contains non-Clifford instructions)", flush=True)
+                stabilizer_shot_total = None
+
             print(f"         bosonic (aer) {SHOTS} shots ...", end="", flush=True)
             aer_shot_total = _bench_aer_shots(distributed_lowered.as_monolithic_circuit())
             print(f" {aer_shot_total / SHOTS * 1_000:.2f} µs/shot", flush=True)
 
-            rows.append((name, n, sv_run, pblock_run, raw_run, aer_run, sv_shot_total, pblock_shot_total, raw_shot_total, aer_shot_total))
+            # Append tracking statistics containing the new stabilizer data parameters to the metric repository
+            rows.append((name, n, sv_run, pblock_run, raw_run, aer_run, sv_shot_total, pblock_shot_total, raw_shot_total, stabilizer_shot_total, aer_shot_total))
             print(f"         done.", flush=True)
 
         print(f"\n\nPerformance: dqsim vs Qiskit Aer  (SHOTS={SHOTS}, single-call timing)\n")
         print(_HEADER)
         print(_SEP)
-        for name, qb, sv_run, pblock_run, raw_run, aer_run, sv_shot, pblock_shot, raw_shot, aer_shot in rows:
-            print(_row(name, qb, sv_run, pblock_run, raw_run, aer_run, sv_shot, pblock_shot, raw_shot, aer_shot))
+        # Print the detailed data rows including the stabilizer shot simulation metrics
+        for name, qb, sv_run, pblock_run, raw_run, aer_run, sv_shot, pblock_shot, raw_shot, stab_shot, aer_shot in rows:
+            print(_row(name, qb, sv_run, pblock_run, raw_run, aer_run, sv_shot, pblock_shot, raw_shot, stab_shot, aer_shot))
         print(_SEP)
+        # Output documentation summary regarding the meaning of the columns, highlighting the stabilizer speedups
         print(
             "  sv run(ms)   : dqsim StatevectorSimulator.simulate() — one statevector evolution\n"
             "  pblock run(ms): PBlockSimulator.simulate() on lowered=True distributed circuit\n"
             "  raw run(ms)   : PBlockSimulator.simulate() on lowered=False distributed circuit\n"
             "  aer run(ms)  : AerSimulator(statevector).run(shots=1) — one statevector evolution\n"
-            "  *  shot(µs)  : total shot-batch time / SHOTS  (dqsim: simulate+counts; aer: run(shots=SHOTS))\n"
-            "  *  speedup   : aer_run / dqsim_run  (>1 = dqsim faster)\n"
+            "  * shot(µs)  : total shot-batch time / SHOTS  (dqsim: simulate+counts; aer: run(shots=SHOTS))\n"
+            "  * speedup   : aer_run / dqsim_run or aer_shot / stabilizer_shot (>1 = dqsim faster)\n"
         )
